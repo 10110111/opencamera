@@ -2459,7 +2459,7 @@ public class CameraController2 extends CameraController {
         //camera_features.picture_sizes.get(0).supports_burst = false;
 
         raw_size = null;
-        if( capabilities_raw ) {
+        if( true || capabilities_raw ) {
             android.util.Size [] raw_camera_picture_sizes = configs.getOutputSizes(ImageFormat.RAW_SENSOR);
             if( raw_camera_picture_sizes == null ) {
                 if( MyDebug.LOG )
