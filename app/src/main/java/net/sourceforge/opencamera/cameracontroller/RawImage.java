@@ -24,6 +24,12 @@ public class RawImage {
         this.image = image;
     }
 
+    static
+    {
+        System.loadLibrary("dng-fixup");
+    }
+    private static native void dngFixup();
+
     /** Writes the dng file to the supplied output.
      */
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
@@ -32,6 +38,7 @@ public class RawImage {
             Log.d(TAG, "writeImage");
         try {
             dngCreator.writeImage(dngOutput, image);
+            dngFixup();
         }
         catch(AssertionError e) {
             // have had AssertionError from OnePlus 5 on Google Play; rethrow as an IOException so it's handled
