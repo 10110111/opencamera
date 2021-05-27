@@ -115,18 +115,6 @@
         <item>0</item>
         <item>180</item>
     </string-array>
-    <string-array name="preference_immersive_mode_entries">
-        <item>Off</item>
-        <item>Only hide on-screen virtual navigation buttons</item>
-        <item>Hide GUI</item>
-        <item>Hide everything</item>
-    </string-array>
-    <string-array name="preference_immersive_mode_values">
-        <item>immersive_mode_off</item>
-        <item>immersive_mode_low_profile</item>
-        <item>immersive_mode_gui</item>
-        <item>immersive_mode_everything</item>
-    </string-array>
     <string-array name="preference_angle_highlight_color_entries"> <!-- n.b., also used for focus peaking colors -->
         <item>Red</item>
         <item>Green</item>
@@ -559,19 +547,55 @@
     </string-array>
     <string-array name="preference_video_log_entries">
         <item>@string/preference_video_log_off</item>
+        <item>@string/preference_video_rec709</item>
+        <item>@string/preference_video_srgb</item>
         <item>@string/preference_video_log_fine</item>
         <item>@string/preference_video_log_low</item>
         <item>@string/preference_video_log_medium</item>
         <item>@string/preference_video_log_strong</item>
         <item>@string/preference_video_log_extra_strong</item>
+        <item>@string/preference_video_gamma</item>
+        <item>@string/preference_video_jtvideo</item>
+        <item>@string/preference_video_jtlog</item>
+        <item>@string/preference_video_jtlog2</item>
     </string-array>
     <string-array name="preference_video_log_values">
         <item>off</item>
+        <item>rec709</item>
+        <item>srgb</item>
         <item>fine</item>
         <item>low</item>
         <item>medium</item>
         <item>strong</item>
         <item>extra_strong</item>
+        <item>gamma</item>
+        <item>jtvideo</item>
+        <item>jtlog</item>
+        <item>jtlog2</item>
+    </string-array>
+    <string-array name="preference_video_profile_gamma_entries">
+        <item>@string/preference_video_profile_gamma_1_6</item>
+        <item>@string/preference_video_profile_gamma_1_8</item>
+        <item>@string/preference_video_profile_gamma_1_9</item>
+        <item>@string/preference_video_profile_gamma_2_0</item>
+        <item>@string/preference_video_profile_gamma_2_1</item>
+        <item>@string/preference_video_profile_gamma_2_2</item>
+        <item>@string/preference_video_profile_gamma_2_3</item>
+        <item>@string/preference_video_profile_gamma_2_4</item>
+        <item>@string/preference_video_profile_gamma_2_6</item>
+        <item>@string/preference_video_profile_gamma_2_8</item>
+    </string-array>
+    <string-array name="preference_video_profile_gamma_values">
+        <item>1.6</item>
+        <item>1.8</item>
+        <item>1.9</item>
+        <item>2.0</item>
+        <item>2.1</item>
+        <item>2.2</item>
+        <item>2.3</item>
+        <item>2.4</item>
+        <item>2.6</item>
+        <item>2.8</item>
     </string-array>
     <string-array name="preference_record_audio_src_entries">
         <item>@string/preference_record_audio_src_camcorder</item>
@@ -689,6 +713,9 @@
         <item>@string/preference_burst_mode_30x</item>
         <item>@string/preference_burst_mode_40x</item>
         <item>@string/preference_burst_mode_50x</item>
+        <item>@string/preference_burst_mode_100x</item>
+        <item>@string/preference_burst_mode_200x</item>
+        <item>@string/preference_burst_mode_500x</item>
         <item>@string/preference_burst_mode_unlimited</item>
     </string-array>
     <string-array name="preference_burst_mode_values">
@@ -702,6 +729,9 @@
         <item>30</item>
         <item>40</item>
         <item>50</item>
+        <item>100</item>
+        <item>200</item>
+        <item>500</item>
         <item>unlimited</item>
     </string-array>
     <!-- note, actually refers to the auto-repeat mode, not the newer fast burst mode -->
@@ -796,22 +826,22 @@
         <item>crop_guide_2.4</item>
     </string-array>
     <string-array name="preference_audio_noise_control_sensitivity_entries">
-        <item>@string/preference_audio_noise_control_sensitivity_3</item>
-        <item>@string/preference_audio_noise_control_sensitivity_2</item>
-        <item>@string/preference_audio_noise_control_sensitivity_1</item>
-        <item>@string/preference_audio_noise_control_sensitivity_0</item>
-        <item>@string/preference_audio_noise_control_sensitivity_m1</item>
-        <item>@string/preference_audio_noise_control_sensitivity_m2</item>
         <item>@string/preference_audio_noise_control_sensitivity_m3</item>
+        <item>@string/preference_audio_noise_control_sensitivity_m2</item>
+        <item>@string/preference_audio_noise_control_sensitivity_m1</item>
+        <item>@string/preference_audio_noise_control_sensitivity_0</item>
+        <item>@string/preference_audio_noise_control_sensitivity_1</item>
+        <item>@string/preference_audio_noise_control_sensitivity_2</item>
+        <item>@string/preference_audio_noise_control_sensitivity_3</item>
     </string-array>
     <string-array name="preference_audio_noise_control_sensitivity_values">
-        <item>3</item>
-        <item>2</item>
-        <item>1</item>
-        <item>0</item>
-        <item>-1</item>
-        <item>-2</item>
         <item>-3</item>
+        <item>-2</item>
+        <item>-1</item>
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
     </string-array>
     <string-array name="preference_video_output_format_entries">
         <item>@string/preference_video_output_format_default</item>
@@ -892,6 +922,11 @@
         <item>@string/preference_zebra_stripes_70pc</item>
         <item>@string/preference_zebra_stripes_80pc</item>
         <item>@string/preference_zebra_stripes_90pc</item>
+        <item>@string/preference_zebra_stripes_93pc</item>
+        <item>@string/preference_zebra_stripes_95pc</item>
+        <item>@string/preference_zebra_stripes_97pc</item>
+        <item>@string/preference_zebra_stripes_98pc</item>
+        <item>@string/preference_zebra_stripes_99pc</item>
         <item>@string/preference_zebra_stripes_100pc</item>
     </string-array>
     <string-array name="preference_zebra_stripes_values">
@@ -899,6 +934,11 @@
         <item>179</item>
         <item>204</item>
         <item>230</item>
+        <item>237</item>
+        <item>242</item>
+        <item>247</item>
+        <item>250</item>
+        <item>252</item>
         <item>255</item>
     </string-array>
     <string-array name="preference_focus_peaking_entries">
@@ -926,5 +966,37 @@
         <item>preference_panorama_save_no</item>
         <item>preference_panorama_save_all</item>
         <item>preference_panorama_save_all_plus_debug</item>
+    </string-array>
+    <string-array name="preference_immersive_mode_entries">
+        <item>@string/preference_immersive_mode_off</item>
+        <item>@string/preference_immersive_mode_low_profile</item>
+        <item>@string/preference_immersive_mode_navigation</item>
+        <item>@string/preference_immersive_mode_gui</item>
+        <item>@string/preference_immersive_mode_everything</item>
+    </string-array>
+    <string-array name="preference_immersive_mode_values">
+        <item>immersive_mode_off</item>
+        <item>immersive_mode_low_profile</item>
+        <item>immersive_mode_navigation</item>
+        <item>immersive_mode_gui</item>
+        <item>immersive_mode_everything</item>
+    </string-array>
+    <string-array name="preference_zebra_stripes_foreground_color_entries">
+        <item>@string/preference_zebra_stripes_color_black</item>
+        <item>@string/preference_zebra_stripes_color_red</item>
+        <item>@string/preference_zebra_stripes_color_orange</item>
+    </string-array>
+    <string-array name="preference_zebra_stripes_foreground_color_values">
+        <item>#ff000000</item> <!-- Black -->
+        <item>#fff44336</item> <!-- Red 500 -->
+        <item>#ffff9800</item> <!-- Orange 500 -->
+    </string-array>
+    <string-array name="preference_zebra_stripes_background_color_entries">
+        <item>@string/preference_zebra_stripes_color_white</item>
+        <item>@string/preference_zebra_stripes_color_transparent</item>
+    </string-array>
+    <string-array name="preference_zebra_stripes_background_color_values">
+        <item>#ffffffff</item> <!-- White -->
+        <item>#00000000</item> <!-- Transparent -->
     </string-array>
 </resources>

@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="net.sourceforge.opencamera"
-    android:versionCode="74"
-    android:versionName="1.47.3"
+    android:versionCode="80"
+    android:versionName="1.48.3"
     android:installLocation="auto"
-    >
+    tools:ignore="GoogleAppIndexingWarning">
+    <!-- ignore GoogleAppIndexingWarning as we don't want to implement that -->
 
     <supports-screens android:xlargeScreens="true" android:largeScreens="true" android:normalScreens="true" android:smallScreens="true" android:anyDensity="true"/>
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"
+        tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -70,11 +74,8 @@
         <activity
             android:name="net.sourceforge.opencamera.remotecontrol.DeviceScanner"
             android:label="@string/scan_ble"
+            android:exported="false"
         >
-            <intent-filter>
-                <action android:name="net.sourceforge.opencamera.Remotecontrol.DeviceScanner"/>
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
         </activity>
 
         <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
@@ -86,6 +87,7 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:taskAffinity=""
             android:excludeFromRecents="true"
+            android:exported="false"
             >
         </activity>
         <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
@@ -145,6 +147,9 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
-        <service android:name="net.sourceforge.opencamera.remotecontrol.BluetoothLeService" android:enabled="true"/>
+        <service android:name="net.sourceforge.opencamera.remotecontrol.BluetoothLeService"
+            android:enabled="true"
+            android:exported="false"
+            />
     </application>
 </manifest>

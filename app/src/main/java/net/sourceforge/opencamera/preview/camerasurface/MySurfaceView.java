@@ -13,7 +13,6 @@ import android.media.MediaRecorder;
 import android.os.Handler;
 import android.util.Log;
 import android.view.MotionEvent;
-import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 
@@ -39,7 +38,7 @@ public class MySurfaceView extends SurfaceView implements CameraSurface {
         // underlying surface is created and destroyed.
         getHolder().addCallback(preview);
         // deprecated setting, but required on Android versions prior to 3.0
-        getHolder().setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS); // deprecated
+        //getHolder().setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS); // deprecated
 
         tick = new Runnable() {
             public void run() {

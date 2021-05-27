@@ -91,7 +91,7 @@
     <string name="preference_pause_preview">Çəkilişdən sonra fasilə</string>
     <string name="preference_pause_preview_summary">Şəkil çəkildikdən sonra paylaşma və ya silinmə imkanları yaradan fasilə</string>
     <string name="preference_shutter_sound">Çəkiliş səsi</string>
-    <string name="preference_shutter_sound_summary">Şəkil çəkilən zaman eşidilən səs (bağlanması üçün Android 4.2+ tələb olunur)</string>
+    <string name="preference_shutter_sound_summary">Şəkil çəkilən zaman eşidilən səs</string>
     <string name="preference_volume_keys">Səs səviyyəsi düyməsi</string>
     <string name="preference_save_location">Saxlanma yeri</string>
     <string name="preference_save_location_summary">Şəkil və videonun saxlanması üçün qovluq adı</string>
@@ -182,7 +182,7 @@
     <string name="preference_donate">Dəstək üçün İanə</string>
     <string name="preference_donate_summary">Əgər bu proqram xoşunuza gəlirsə, lütfən ianə vermək haqqında düşünün. Siz bunu Proqram üçün ianə - toxunaraq almaqla edə bilərsiniz, bu funksiya proqrama ianə vermək üçün səhifəni açacaq. Təşəkkürlər!</string>
     <string name="preference_use_camera2">Camera2 API istifadəsi</string>
-    <string name="preference_use_camera2_summary">Android 5 Camera2 API işə salınması - əlavə funksiyalar təqdim edir, amma hazırda bu ekperimentaldır (yenidənbaşlamalara səbəb ola bilər)</string>
+    <string name="preference_use_camera2_summary">Camera2 API işə salınması - əlavə funksiyalar təqdim edir, amma hazırda bu ekperimentaldır (yenidənbaşlamalara səbəb ola bilər)</string>
     <string name="preference_about">Haqqında</string>
     <string name="preference_about_summary">Proqram məlumatları</string>
     <string name="preference_reset">Parametrləri sıfırla</string>
@@ -276,6 +276,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Sonsuz</string>
 
     <string name="preference_burst_interval_no_delay">Fasiləsiz</string>
@@ -310,5 +317,10 @@
 
     <string name="preference_ui_placement_left">Sol əllə işləyənlər üçün</string>
     <string name="preference_ui_placement_right">Sağ əllə işləyənlər üçün</string>
+
+    <string name="preference_immersive_mode_off">Bağla</string>
+    <string name="preference_immersive_mode_navigation">Hərəkət düyməsini gizlə</string>
+    <string name="preference_immersive_mode_gui">GUI gizlə</string>
+    <string name="preference_immersive_mode_everything">Hamısını gizlə</string>
 
 </resources>

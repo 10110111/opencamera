@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.ImageFormat;
@@ -36,7 +35,7 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.hardware.camera2.params.TonemapCurve;
 import android.location.Location;
 import android.media.AudioManager;
-import android.media.ExifInterface;
+import androidx.exifinterface.media.ExifInterface;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
@@ -44,8 +43,10 @@ import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import android.util.Log;
+import android.util.Pair;
 import android.util.Range;
 import android.util.SizeF;
 import android.view.Display;
@@ -56,27 +57,94 @@ import android.view.TextureView;
 /** Provides support using Android 5's Camera 2 API
  *  android.hardware.camera2.*.
  */
-@TargetApi(Build.VERSION_CODES.LOLLIPOP)
+@RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
 public class CameraController2 extends CameraController {
     private static final String TAG = "CameraController2";
 
     private final Context context;
     private CameraDevice camera;
-    private String cameraIdS;
+    private final String cameraIdS;
 
+    private final boolean is_samsung;
     private final boolean is_samsung_s7; // Galaxy S7 or Galaxy S7 Edge
 
     private CameraCharacteristics characteristics;
     // cached characteristics (use this for values that need to be frequently accessed, e.g., per frame, to improve performance);
     private int characteristics_sensor_orientation;
-    private boolean characteristics_is_front_facing;
+    private Facing characteristics_facing;
 
     private List<Integer> zoom_ratios;
     private int current_zoom_value;
     private boolean supports_face_detect_mode_simple;
     private boolean supports_face_detect_mode_full;
+    private boolean supports_optical_stabilization;
     private boolean supports_photo_video_recording;
-    private final static int tonemap_max_curve_points_c = 64;
+    private boolean supports_white_balance_temperature;
+    private String initial_focus_mode; // if non-null, focus mode to use if not set by Preview (rather than relying on the Builder template's default, which can be one that isn't supported, at least on Android emulator with its LIMITED camera!)
+
+    private final static int tonemap_log_max_curve_points_c = 64;
+    private final static float [] jtvideo_values_base = new float[] {
+            0.00f,    0.00f,
+            0.01f,    0.055f,
+            0.02f,    0.1f,
+            0.05f,    0.21f,
+            0.09f,    0.31f,
+            0.13f,    0.38f,
+            0.18f,    0.45f,
+            0.28f,    0.57f,
+            0.35f,    0.64f,
+            0.45f,    0.72f,
+            0.51f,    0.76f,
+            0.60f,    0.82f,
+            0.67f,    0.86f,
+            0.77f,    0.91f,
+            0.88f,    0.96f,
+            0.97f,    0.99f,
+            1.00f,    1.00f
+    };
+    private final float [] jtvideo_values;
+    private final static float [] jtlog_values_base = new float[] {
+            0.00f,    0.00f,
+            0.01f,    0.07f,
+            0.03f,    0.17f,
+            0.05f,    0.25f,
+            0.07f,    0.31f,
+            0.09f,    0.36f,
+            0.13f,    0.44f,
+            0.18f,    0.51f,
+            0.24f,    0.57f,
+            0.31f,    0.64f,
+            0.38f,    0.70f,
+            0.46f,    0.76f,
+            0.58f,    0.83f,
+            0.70f,    0.89f,
+            0.86f,    0.95f,
+            0.99f,    0.99f,
+            1.00f,    1.00f
+    };
+    private final float [] jtlog_values;
+    private final static float [] jtlog2_values_base = new float[] {
+            0.00f,    0.00f,
+            0.01f,    0.09f,
+            0.03f,    0.23f,
+            0.07f,    0.37f,
+            0.12f,    0.48f,
+            0.17f,    0.56f,
+            0.25f,    0.64f,
+            0.32f,    0.70f,
+            0.39f,    0.75f,
+            0.50f,    0.81f,
+            0.59f,    0.85f,
+            0.66f,    0.88f,
+            0.72f,    0.9f,
+            0.78f,    0.92f,
+            0.88f,    0.95f,
+            0.92f,    0.96f,
+            0.99f,    0.98f,
+            1.00f,    1.00f
+    };
+    private final float [] jtlog2_values;
+
     private final ErrorCallback preview_error_cb;
     private final ErrorCallback camera_error_cb;
     private CameraCaptureSession captureSession;
@@ -190,6 +258,8 @@ public class CameraController2 extends CameraController {
     private long capture_result_exposure_time;
     private boolean capture_result_has_frame_duration;
     private long capture_result_frame_duration;
+    private boolean capture_result_has_aperture;
+    private float capture_result_aperture;
     /*private boolean capture_result_has_focus_distance;
     private float capture_result_focus_distance_min;
     private float capture_result_focus_distance_max;*/
@@ -197,8 +267,8 @@ public class CameraController2 extends CameraController {
     
     private enum RequestTagType {
         CAPTURE, // request is either for a regular non-burst capture, or the last of a burst capture sequence
-        CAPTURE_BURST_IN_PROGRESS, // request is for a burst capture, but isn't the last of the burst capture sequence
-        NONE // should be treated the same as if no tag had been set on the request - but allows the request tag type to be changed later
+        CAPTURE_BURST_IN_PROGRESS // request is for a burst capture, but isn't the last of the burst capture sequence
+        //NONE // should be treated the same as if no tag had been set on the request - but allows the request tag type to be changed later
     }
 
     /* The class that we use for setTag() and getTag() for capture requests.
@@ -238,9 +308,11 @@ public class CameraController2 extends CameraController {
         private int antibanding = CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO;
         private boolean has_edge_mode;
         private int edge_mode = CameraMetadata.EDGE_MODE_FAST;
+        private boolean has_default_edge_mode;
         private Integer default_edge_mode;
         private boolean has_noise_reduction_mode;
         private int noise_reduction_mode = CameraMetadata.NOISE_REDUCTION_MODE_FAST;
+        private boolean has_default_noise_reduction_mode;
         private Integer default_noise_reduction_mode;
         private int white_balance_temperature = 5000; // used for white_balance == CONTROL_AWB_MODE_OFF
         private String flash_value = "flash_off";
@@ -249,6 +321,8 @@ public class CameraController2 extends CameraController {
         //private int flash_mode = CameraMetadata.FLASH_MODE_OFF;
         private int iso;
         private long exposure_time = EXPOSURE_TIME_DEFAULT;
+        private boolean has_aperture;
+        private float aperture;
         private Rect scalar_crop_region; // no need for has_scalar_crop_region, as we can set to null instead
         private boolean has_ae_exposure_compensation;
         private int ae_exposure_compensation;
@@ -262,9 +336,11 @@ public class CameraController2 extends CameraController {
         private MeteringRectangle [] ae_regions; // no need for has_scalar_crop_region, as we can set to null instead
         private boolean has_face_detect_mode;
         private int face_detect_mode = CaptureRequest.STATISTICS_FACE_DETECT_MODE_OFF;
+        private Integer default_optical_stabilization;
         private boolean video_stabilization;
-        private boolean use_log_profile;
-        private float log_profile_strength;
+        private TonemapProfile tonemap_profile = TonemapProfile.TONEMAPPROFILE_OFF;
+        private float log_profile_strength; // for TONEMAPPROFILE_LOG
+        private float gamma_profile; // for TONEMAPPROFILE_GAMMA
         private Integer default_tonemap_mode; // since we don't know what a device's tonemap mode is, we save it so we can switch back to it
         private Range<Integer> ae_target_fps_range;
         private long sensor_frame_duration;
@@ -276,7 +352,7 @@ public class CameraController2 extends CameraController {
                     exif_orientation = ExifInterface.ORIENTATION_NORMAL;
                     break;
                 case 90:
-                    exif_orientation = isFrontFacing() ?
+                    exif_orientation = (getFacing() == Facing.FACING_FRONT) ?
                             ExifInterface.ORIENTATION_ROTATE_270 :
                             ExifInterface.ORIENTATION_ROTATE_90;
                     break;
@@ -284,7 +360,7 @@ public class CameraController2 extends CameraController {
                     exif_orientation = ExifInterface.ORIENTATION_ROTATE_180;
                     break;
                 case 270:
-                    exif_orientation = isFrontFacing() ?
+                    exif_orientation = (getFacing() == Facing.FACING_FRONT) ?
                             ExifInterface.ORIENTATION_ROTATE_90 :
                             ExifInterface.ORIENTATION_ROTATE_270;
                     break;
@@ -325,8 +401,8 @@ public class CameraController2 extends CameraController {
             setAERegions(builder);
             setFaceDetectMode(builder);
             setRawMode(builder);
-            setVideoStabilization(builder);
-            setLogProfile(builder);
+            setStabilization(builder);
+            setTonemapProfile(builder);
 
             if( is_still ) {
                 if( location != null ) {
@@ -394,6 +470,8 @@ public class CameraController2 extends CameraController {
                         Log.d(TAG, "raw_sensitivity_boost: " + (raw_sensitivity_boost==null ? "null" : raw_sensitivity_boost));
                     }*/
                 }
+                //Integer ois_mode = builder.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE);
+                //Log.d(TAG, "ois_mode: " + (ois_mode==null ? "null" : ois_mode));
             }
         }
 
@@ -480,12 +558,14 @@ public class CameraController2 extends CameraController {
         private boolean setEdgeMode(CaptureRequest.Builder builder) {
             if( MyDebug.LOG ) {
                 Log.d(TAG, "setEdgeMode");
+                Log.d(TAG, "has_default_edge_mode: " + has_default_edge_mode);
                 Log.d(TAG, "default_edge_mode: " + default_edge_mode);
             }
             boolean changed = false;
             if( has_edge_mode ) {
-                if( default_edge_mode == null ) {
+                if( !has_default_edge_mode ) {
                     // save the default_edge_mode edge_mode
+                    has_default_edge_mode = true;
                     default_edge_mode = builder.get(CaptureRequest.EDGE_MODE);
                     if( MyDebug.LOG )
                         Log.d(TAG, "default_edge_mode: " + default_edge_mode);
@@ -509,7 +589,7 @@ public class CameraController2 extends CameraController {
                 // need EDGE_MODE_OFF to avoid a "glow" effect
                 builder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF);
             }
-            else if( default_edge_mode != null ) {
+            else if( has_default_edge_mode ) {
                 if( builder.get(CaptureRequest.EDGE_MODE) != null && !builder.get(CaptureRequest.EDGE_MODE).equals(default_edge_mode) ) {
                     builder.set(CaptureRequest.EDGE_MODE, default_edge_mode);
                     changed = true;
@@ -521,12 +601,14 @@ public class CameraController2 extends CameraController {
         private boolean setNoiseReductionMode(CaptureRequest.Builder builder) {
             if( MyDebug.LOG ) {
                 Log.d(TAG, "setNoiseReductionMode");
+                Log.d(TAG, "has_default_noise_reduction_mode: " + has_default_noise_reduction_mode);
                 Log.d(TAG, "default_noise_reduction_mode: " + default_noise_reduction_mode);
             }
             boolean changed = false;
             if( has_noise_reduction_mode ) {
-                if( default_noise_reduction_mode == null ) {
+                if( !has_default_noise_reduction_mode ) {
                     // save the default_noise_reduction_mode noise_reduction_mode
+                    has_default_noise_reduction_mode = true;
                     default_noise_reduction_mode = builder.get(CaptureRequest.NOISE_REDUCTION_MODE);
                     if( MyDebug.LOG )
                         Log.d(TAG, "default_noise_reduction_mode: " + default_noise_reduction_mode);
@@ -550,7 +632,7 @@ public class CameraController2 extends CameraController {
                 // need NOISE_REDUCTION_MODE_OFF to avoid excessive blurring
                 builder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_OFF);
             }
-            else if( default_noise_reduction_mode != null ) {
+            else if( has_default_noise_reduction_mode ) {
                 if( builder.get(CaptureRequest.NOISE_REDUCTION_MODE) != null && !builder.get(CaptureRequest.NOISE_REDUCTION_MODE).equals(default_noise_reduction_mode)) {
                     builder.set(CaptureRequest.NOISE_REDUCTION_MODE, default_noise_reduction_mode);
                     changed = true;
@@ -559,6 +641,20 @@ public class CameraController2 extends CameraController {
             return changed;
         }
 
+        private boolean setAperture(CaptureRequest.Builder builder) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "setAperture");
+            // don't set at all if has_aperture==false
+            if( has_aperture ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "    aperture: " + aperture);
+                builder.set(CaptureRequest.LENS_APERTURE, aperture);
+                return true;
+            }
+            return false;
+        }
+
+        @SuppressWarnings("SameReturnValue")
         private boolean setAEMode(CaptureRequest.Builder builder, boolean is_still) {
             if( MyDebug.LOG )
                 Log.d(TAG, "setAEMode");
@@ -583,24 +679,13 @@ public class CameraController2 extends CameraController {
                 }
                 //builder.set(CaptureRequest.SENSOR_FRAME_DURATION, 1000000000L);
                 //builder.set(CaptureRequest.SENSOR_FRAME_DURATION, 0L);
-                // for now, flash is disabled when using manual iso - it seems to cause ISO level to jump to 100 on Nexus 6 when flash is turned on!
-                builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF);
-                // set flash via CaptureRequest.FLASH
-                /*if( flash_value.equals("flash_off") ) {
-                    builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF);
-                }
-                else if( flash_value.equals("flash_auto") ) {
-                    builder.set(CaptureRequest.FLASH_MODE, is_still ? CameraMetadata.FLASH_MODE_SINGLE : CameraMetadata.FLASH_MODE_OFF);
-                }
-                else if( flash_value.equals("flash_on") ) {
-                    builder.set(CaptureRequest.FLASH_MODE, is_still ? CameraMetadata.FLASH_MODE_SINGLE : CameraMetadata.FLASH_MODE_OFF);
-                }
-                else if( flash_value.equals("flash_torch") ) {
+                // only need to account for FLASH_MODE_TORCH, otherwise we use fake flash mode for manual ISO
+                if( flash_value.equals("flash_torch") ) {
                     builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
                 }
-                else if( flash_value.equals("flash_red_eye") ) {
-                    builder.set(CaptureRequest.FLASH_MODE, is_still ? CameraMetadata.FLASH_MODE_SINGLE : CameraMetadata.FLASH_MODE_OFF);
-                }*/
+                else {
+                    builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF);
+                }
             }
             else {
                 if( MyDebug.LOG ) {
@@ -613,6 +698,7 @@ public class CameraController2 extends CameraController {
                 }
 
                 // prefer to set flash via the ae mode (otherwise get even worse results), except for torch which we can't
+                //noinspection DuplicateBranchesInSwitch
                 switch(flash_value) {
                     case "flash_off":
                         builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
@@ -688,6 +774,11 @@ public class CameraController2 extends CameraController {
                     Log.d(TAG, "change af mode to " + af_mode);
                 builder.set(CaptureRequest.CONTROL_AF_MODE, af_mode);
             }
+            else {
+                if( MyDebug.LOG ) {
+                    Log.d(TAG, "af mode left at " + builder.get(CaptureRequest.CONTROL_AF_MODE));
+                }
+            }
         }
         
         private void setFocusDistance(CaptureRequest.Builder builder) {
@@ -731,13 +822,34 @@ public class CameraController2 extends CameraController {
             }
         }
         
-        private void setVideoStabilization(CaptureRequest.Builder builder) {
+        private void setStabilization(CaptureRequest.Builder builder) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "setStabilization: " + video_stabilization);
             builder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, video_stabilization ? CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON : CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
+            if( supports_optical_stabilization ) {
+                if( video_stabilization ) {
+                    // should also disable OIS
+                    if( default_optical_stabilization == null ) {
+                        // save the default optical_stabilization
+                        default_optical_stabilization = builder.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE);
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "default_optical_stabilization: " + default_optical_stabilization);
+                    }
+                    builder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF);
+                }
+                else if( default_optical_stabilization != null ) {
+                    if( builder.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE) != null && !builder.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE).equals(default_optical_stabilization) ) {
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "set optical stabilization back to: " + default_optical_stabilization);
+                        builder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, default_optical_stabilization);
+                    }
+                }
+            }
         }
 
         private float getLogProfile(float in) {
             //final float black_level = 4.0f/255.0f;
-            final float power = 1.0f/2.2f;
+            //final float power = 1.0f/2.2f;
             final float log_A = log_profile_strength;
             /*float out;
             if( in <= black_level ) {
@@ -751,81 +863,268 @@ public class CameraController2 extends CameraController {
             float out = (float) (Math.log1p(log_A * in) / Math.log1p(log_A));
 
             // apply gamma
-            out = (float)Math.pow(out, power);
+            // update: no longer need to do this with improvements made in 1.48 onwards
+            //out = (float)Math.pow(out, power);
             //out = Math.max(out, 0.5f);
 
             return out;
         }
 
-        private void setLogProfile(CaptureRequest.Builder builder) {
+        private float getGammaProfile(float in) {
+            return (float)Math.pow(in, 1.0f/gamma_profile);
+        }
+
+        private void setTonemapProfile(CaptureRequest.Builder builder) {
             if( MyDebug.LOG ) {
-                Log.d(TAG, "setLogProfile");
-                Log.d(TAG, "use_log_profile: " + use_log_profile);
+                Log.d(TAG, "setTonemapProfile");
+                Log.d(TAG, "tonemap_profile: " + tonemap_profile);
                 Log.d(TAG, "log_profile_strength: " + log_profile_strength);
+                Log.d(TAG, "gamma_profile: " + gamma_profile);
                 Log.d(TAG, "default_tonemap_mode: " + default_tonemap_mode);
             }
-            if( use_log_profile && log_profile_strength > 0.0f ) {
+            boolean have_tonemap_profile = tonemap_profile != TonemapProfile.TONEMAPPROFILE_OFF;
+            if( tonemap_profile == TonemapProfile.TONEMAPPROFILE_LOG && log_profile_strength == 0.0f )
+                have_tonemap_profile = false;
+            else if( tonemap_profile == TonemapProfile.TONEMAPPROFILE_GAMMA && gamma_profile == 0.0f )
+                have_tonemap_profile = false;
+
+            // to use test_new, also need to uncomment the test code in setFocusValue() to call setTonemapProfile()
+            //boolean test_new = this.af_mode == CaptureRequest.CONTROL_AF_MODE_AUTO; // testing
+
+            //if( test_new )
+            //    have_tonemap_profile = false;
+
+            if( have_tonemap_profile ) {
                 if( default_tonemap_mode == null ) {
                     // save the default tonemap_mode
                     default_tonemap_mode = builder.get(CaptureRequest.TONEMAP_MODE);
                     if( MyDebug.LOG )
                         Log.d(TAG, "default_tonemap_mode: " + default_tonemap_mode);
                 }
-                // if changing this, make sure we don't exceed tonemap_max_curve_points_c
-                // we want:
-                // 0-15: step 1 (16 values)
-                // 16-47: step 2 (16 values)
-                // 48-111: step 4 (16 values)
-                // 112-231 : step 8 (15 values)
-                // 232-255: step 24 (1 value)
-                int step = 1, c = 0;
-                float [] values = new float[2*tonemap_max_curve_points_c];
-                for(int i=0;i<232;i+=step) {
-                    float in = ((float)i) / 255.0f;
-                    float out = getLogProfile(in);
-                    values[c++] = in;
-                    values[c++] = out;
-                    if( (c/2) % 16 == 0 ) {
-                        step *= 2;
+
+                final boolean use_preset_curve = true;
+                //final boolean use_preset_curve = false; // test
+                //final boolean use_preset_curve = test_new; // test
+                if( use_preset_curve && tonemap_profile == TonemapProfile.TONEMAPPROFILE_REC709 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "set TONEMAP_PRESET_CURVE_REC709");
+                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_PRESET_CURVE);
+                    builder.set(CaptureRequest.TONEMAP_PRESET_CURVE, CaptureRequest.TONEMAP_PRESET_CURVE_REC709);
+                }
+                else if( use_preset_curve && tonemap_profile == TonemapProfile.TONEMAPPROFILE_SRGB && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "set TONEMAP_PRESET_CURVE_SRGB");
+                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_PRESET_CURVE);
+                    builder.set(CaptureRequest.TONEMAP_PRESET_CURVE, CaptureRequest.TONEMAP_PRESET_CURVE_SRGB);
+                }
+                else {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "handle via TONEMAP_MODE_CONTRAST_CURVE / TONEMAP_CURVE");
+                    float [] values = null;
+                    switch( tonemap_profile ) {
+                        case TONEMAPPROFILE_REC709:
+                            // y = 4.5x if x < 0.018, else y = 1.099*x^0.45 - 0.099
+                            float [] x_values = new float[] {
+                                    0.0000f, 0.0667f, 0.1333f, 0.2000f,
+                                    0.2667f, 0.3333f, 0.4000f, 0.4667f,
+                                    0.5333f, 0.6000f, 0.6667f, 0.7333f,
+                                    0.8000f, 0.8667f, 0.9333f, 1.0000f
+                            };
+                            values = new float[2*x_values.length];
+                            int c = 0;
+                            for(float x_value : x_values) {
+                                float out;
+                                if( x_value < 0.018f ) {
+                                    out = 4.5f * x_value;
+                                }
+                                else {
+                                    out = (float)(1.099*Math.pow(x_value, 0.45) - 0.099);
+                                }
+                                values[c++] = x_value;
+                                values[c++] = out;
+                            }
+                            break;
+                        case TONEMAPPROFILE_SRGB:
+                            values = new float [] {
+                                    0.0000f, 0.0000f, 0.0667f, 0.2864f, 0.1333f, 0.4007f, 0.2000f, 0.4845f,
+                                    0.2667f, 0.5532f, 0.3333f, 0.6125f, 0.4000f, 0.6652f, 0.4667f, 0.7130f,
+                                    0.5333f, 0.7569f, 0.6000f, 0.7977f, 0.6667f, 0.8360f, 0.7333f, 0.8721f,
+                                    0.8000f, 0.9063f, 0.8667f, 0.9389f, 0.9333f, 0.9701f, 1.0000f, 1.0000f
+                            };
+                            break;
+                        case TONEMAPPROFILE_LOG:
+                        case TONEMAPPROFILE_GAMMA:
+                        {
+                            // better to use uniformly spaced values, otherwise we get a weird looking effect - this can be
+                            // seen most prominently when using gamma 1.0f, which should look linear (and hence be independent
+                            // of the x values we use)
+                            // can be reproduced on at least OnePlus 3T and Galaxy S10e (although the exact behaviour of the
+                            // poor results is different on those devices)
+                            int n_values = tonemap_log_max_curve_points_c;
+                            if( is_samsung ) {
+                                // unfortunately odd bug on Samsung devices (at least S7 and S10e) where if more than 32 control points,
+                                // the maximum brightness value is reduced (can best be seen with 64 points, and using gamma==1.0)
+                                // note that Samsung devices also need at least 16 control points - or in some cases 32, see comments for
+                                // enforceMinTonemapCurvePoints().
+                                // 32 is better than 16 anyway, as better to have more points for finer curve where possible.
+                                n_values = 32;
+                            }
+                            //int n_values = test_new ? 32 : 128;
+                            //int n_values = 32;
+                            if( MyDebug.LOG )
+                                Log.d(TAG, "n_values: " + n_values);
+                            values = new float [2*n_values];
+                            for(int i=0;i<n_values;i++) {
+                                float in = ((float)i) / (n_values-1.0f);
+                                float out = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(in) : getGammaProfile(in);
+                                values[2*i] = in;
+                                values[2*i+1] = out;
+                            }
+                        }
+
+                        /*if( test_new ) {
+                            // if changing this, make sure we don't exceed tonemap_log_max_curve_points_c
+                            // we want:
+                            // 0-15: step 1 (16 values)
+                            // 16-47: step 2 (16 values)
+                            // 48-111: step 4 (16 values)
+                            // 112-231 : step 8 (15 values)
+                            // 232-255: step 24 (1 value)
+                            int step = 1, c = 0;
+                            //int step = 4, c = 0;
+                            //int step = test_new ? 4 : 1, c = 0;
+                            values = new float[2*tonemap_log_max_curve_points_c];
+                            for(int i=0;i<232;i+=step) {
+                                float in = ((float)i) / 255.0f;
+                                float out = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(in) : getGammaProfile(in);
+                                if( tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG )
+                                    out = (float)Math.pow(out, 1.0f/2.2f);
+                                values[c++] = in;
+                                values[c++] = out;
+                                if( (c/2) % 16 == 0 ) {
+                                    step *= 2;
+                                }
+                            }
+                            values[c++] = 1.0f;
+                            float last_out = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(1.0f) : getGammaProfile(1.0f);
+                            if( tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG )
+                                last_out = (float)Math.pow(last_out, 1.0f/2.2f);
+                            values[c++] = last_out;
+                            values = Arrays.copyOfRange(values,0,c);
+                        }*/
+                        /*if( test_new )
+                        {
+                            // x values are ranged 0 to 255
+                            float [] x_values = new float[] {
+                                    0.0f, 4.0f, 8.0f, 12.0f, 16.0f, 20.0f, 24.0f, 28.0f,
+                                    //0.0f, 8.0f, 16.0f, 24.0f,
+                                    32.0f, 40.0f, 48.0f, 56.0f,
+                                    64.0f, 72.0f, 80.0f, 88.0f,
+                                    96.0f, 104.0f, 112.0f, 120.0f,
+                                    128.0f, 136.0f, 144.0f, 152.0f,
+                                    160.0f, 168.0f, 176.0f, 184.0f,
+                                    192.0f, 200.0f, 208.0f, 216.0f,
+                                    224.0f, 232.0f, 240.0f, 248.0f,
+                                    255.0f
+                            };
+                            values = new float[2*x_values.length];
+                            c = 0;
+                            for(float x_value : x_values) {
+                                float in = x_value / 255.0f;
+                                float out = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(in) : getGammaProfile(in);
+                                values[c++] = in;
+                                values[c++] = out;
+                            }
+                        }*/
+                        /*if( test_new )
+                        {
+                            values = new float [2*256];
+                            step = 8;
+                            c = 0;
+                            for(int i=0;i<254;i+=step) {
+                                float in = ((float)i) / 255.0f;
+                                float out = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(in) : getGammaProfile(in);
+                                values[c++] = in;
+                                values[c++] = out;
+                            }
+                            values[c++] = 1.0f;
+                            values[c++] = (tonemap_profile==TonemapProfile.TONEMAPPROFILE_LOG) ? getLogProfile(1.0f) : getGammaProfile(1.0f);
+                            values = Arrays.copyOfRange(values,0,c);
+                        }*/
+                        if( MyDebug.LOG ) {
+                            int n_values = values.length/2;
+                            for(int i=0;i<n_values;i++) {
+                                float in = values[2*i];
+                                float out = values[2*i+1];
+                                Log.d(TAG, "i = " + i);
+                                //Log.d(TAG, "    in: " + (int)(in*255.0f+0.5f));
+                                //Log.d(TAG, "    out: " + (int)(out*255.0f+0.5f));
+                                Log.d(TAG, "    in: " + (in*255.0f));
+                                Log.d(TAG, "    out: " + (out*255.0f));
+                            }
+                        }
+                        break;
+                        case TONEMAPPROFILE_JTVIDEO:
+                            values = jtvideo_values;
+                            if( MyDebug.LOG )
+                                Log.d(TAG, "setting JTVideo profile");
+                            break;
+                        case TONEMAPPROFILE_JTLOG:
+                            values = jtlog_values;
+                            if( MyDebug.LOG )
+                                Log.d(TAG, "setting JTLog profile");
+                            break;
+                        case TONEMAPPROFILE_JTLOG2:
+                            values = jtlog2_values;
+                            if( MyDebug.LOG )
+                                Log.d(TAG, "setting JTLog2 profile");
+                            break;
+                    }
+
+                    // sRGB:
+                    /*values = new float []{0.0000f, 0.0000f, 0.0667f, 0.2864f, 0.1333f, 0.4007f, 0.2000f, 0.4845f,
+                            0.2667f, 0.5532f, 0.3333f, 0.6125f, 0.4000f, 0.6652f, 0.4667f, 0.7130f,
+                            0.5333f, 0.7569f, 0.6000f, 0.7977f, 0.6667f, 0.8360f, 0.7333f, 0.8721f,
+                            0.8000f, 0.9063f, 0.8667f, 0.9389f, 0.9333f, 0.9701f, 1.0000f, 1.0000f};*/
+                    /*values = new float []{0.0000f, 0.0000f, 0.05f, 0.3f, 0.1f, 0.4f, 0.2000f, 0.4845f,
+                            0.2667f, 0.5532f, 0.3333f, 0.6125f, 0.4000f, 0.6652f,
+                            0.5f, 0.78f, 1.0000f, 1.0000f};*/
+                    /*values = new float []{0.0f, 0.0f, 0.05f, 0.4f, 0.1f, 0.54f, 0.2f, 0.6f, 0.3f, 0.65f, 0.4f, 0.7f,
+                            0.5f, 0.78f, 1.0f, 1.0f};*/
+                    /*values = new float[]{0.0f, 0.0f, 0.0667f, 0.2864f, 0.1333f, 0.4007f, 0.2000f, 0.4845f,
+                            1.0f, 1.0f};*/
+                    //values = new float []{0.0f, 0.5f, 0.05f, 0.6f, 0.1f, 0.7f, 0.2f, 0.8f, 0.5f, 0.9f, 1.0f, 1.0f};
+                    /*values = new float []{0.0f, 0.0f,
+                            0.05f, 0.05f,
+                            0.1f, 0.1f,
+                            0.15f, 0.15f,
+                            0.2f, 0.2f,
+                            0.25f, 0.25f,
+                            0.3f, 0.3f,
+                            0.35f, 0.35f,
+                            0.4f, 0.4f,
+                            0.5f, 0.5f,
+                            0.6f, 0.6f,
+                            0.7f, 0.7f,
+                            0.8f, 0.8f,
+                            0.9f, 0.9f,
+                            0.95f, 0.95f,
+                            1.0f, 1.0f};*/
+                    //values = enforceMinTonemapCurvePoints(new float[]{0.0f, 0.0f, 1.0f, 1.0f});
+                    //values = enforceMinTonemapCurvePoints(values);
+
+                    if( MyDebug.LOG  )
+                        Log.d(TAG, "values: " + Arrays.toString(values));
+                    if( values != null ) {
+                        builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE);
+                        TonemapCurve tonemap_curve = new TonemapCurve(values, values, values);
+                        builder.set(CaptureRequest.TONEMAP_CURVE, tonemap_curve);
+                        test_used_tonemap_curve = true;
+                    }
+                    else {
+                        Log.e(TAG, "unknown log type: " + tonemap_profile);
                     }
                 }
-                values[c++] = 1.0f;
-                values[c++] = getLogProfile(1.0f);
-                /*{
-                    int n_values = 257;
-                    float [] values = new float [2*n_values];
-                    for(int i=0;i<n_values;i++) {
-                        float in = ((float)i) / (n_values-1.0f);
-                        float out = getLogProfile(in);
-                        values[2*i] = in;
-                        values[2*i+1] = out;
-                    }
-                }*/
-                if( MyDebug.LOG ) {
-                    int n_values = c/2;
-                    for(int i=0;i<n_values;i++) {
-                        float in = values[2*i];
-                        float out = values[2*i+1];
-                        Log.d(TAG, "i = " + i);
-                        Log.d(TAG, "    in: " + (int)(in*255.0f+0.5f));
-                        Log.d(TAG, "    out: " + (int)(out*255.0f+0.5f));
-                    }
-                }
-                // sRGB:
-                /*float [] values = new float []{0.0000f, 0.0000f, 0.0667f, 0.2864f, 0.1333f, 0.4007f, 0.2000f, 0.4845f,
-                        0.2667f, 0.5532f, 0.3333f, 0.6125f, 0.4000f, 0.6652f, 0.4667f, 0.7130f,
-                        0.5333f, 0.7569f, 0.6000f, 0.7977f, 0.6667f, 0.8360f, 0.7333f, 0.8721f,
-                        0.8000f, 0.9063f, 0.8667f, 0.9389f, 0.9333f, 0.9701f, 1.0000f, 1.0000f};*/
-                /*float [] values = new float []{0.0000f, 0.0000f, 0.05f, 0.3f, 0.1f, 0.4f, 0.2000f, 0.4845f,
-                        0.2667f, 0.5532f, 0.3333f, 0.6125f, 0.4000f, 0.6652f,
-                        0.5f, 0.78f, 1.0000f, 1.0000f};*/
-                /*float [] values = new float []{0.0f, 0.0f, 0.05f, 0.4f, 0.1f, 0.54f, 0.2f, 0.6f, 0.3f, 0.65f, 0.4f, 0.7f,
-                        0.5f, 0.78f, 1.0f, 1.0f};*/
-                //float [] values = new float []{0.0f, 0.5f, 0.05f, 0.6f, 0.1f, 0.7f, 0.2f, 0.8f, 0.5f, 0.9f, 1.0f, 1.0f};
-                builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE);
-                TonemapCurve tonemap_curve = new TonemapCurve(values, values, values);
-                builder.set(CaptureRequest.TONEMAP_CURVE, tonemap_curve);
-                test_used_tonemap_curve = true;
             }
             else if( default_tonemap_mode != null ) {
                 builder.set(CaptureRequest.TONEMAP_MODE, default_tonemap_mode);
@@ -848,7 +1147,7 @@ public class CameraController2 extends CameraController {
         }
         else {
             red = temperature - 60;
-            red = (float)(329.698727446 * (Math.pow((double) red, -0.1332047592)));
+            red = (float)(329.698727446 * (Math.pow(red, -0.1332047592)));
             if( red < 0 )
                 red = 0;
             if( red > 255 )
@@ -865,7 +1164,7 @@ public class CameraController2 extends CameraController {
         }
         else {
             green = temperature - 60;
-            green = (float)(288.1221695283 * (Math.pow((double) green, -0.0755148492)));
+            green = (float)(288.1221695283 * (Math.pow(green, -0.0755148492)));
             if (green < 0)
                 green = 0;
             if (green > 255)
@@ -1456,9 +1755,12 @@ public class CameraController2 extends CameraController {
         this.preview_error_cb = preview_error_cb;
         this.camera_error_cb = camera_error_cb;
 
+        this.is_samsung = Build.MANUFACTURER.toLowerCase(Locale.US).contains("samsung");
         this.is_samsung_s7 = Build.MODEL.toLowerCase(Locale.US).contains("sm-g93");
-        if( MyDebug.LOG )
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "is_samsung: " + is_samsung);
             Log.d(TAG, "is_samsung_s7: " + is_samsung_s7);
+        }
 
         thread = new HandlerThread("CameraBackground"); 
         thread.start(); 
@@ -1487,10 +1789,26 @@ public class CameraController2 extends CameraController {
                             Log.d(TAG, "successfully obtained camera characteristics");
                         // now read cached values
                         characteristics_sensor_orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                        characteristics_is_front_facing = characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT;
+
+                        switch( characteristics.get(CameraCharacteristics.LENS_FACING) ) {
+                            case CameraMetadata.LENS_FACING_FRONT:
+                                characteristics_facing = Facing.FACING_FRONT;
+                                break;
+                            case CameraMetadata.LENS_FACING_BACK:
+                                characteristics_facing = Facing.FACING_BACK;
+                                break;
+                            case CameraMetadata.LENS_FACING_EXTERNAL:
+                                characteristics_facing = Facing.FACING_EXTERNAL;
+                                break;
+                            default:
+                                Log.e(TAG, "unknown camera_facing: " + characteristics.get(CameraCharacteristics.LENS_FACING));
+                                characteristics_facing = Facing.FACING_UNKNOWN;
+                                break;
+                        }
+
                         if( MyDebug.LOG ) {
                             Log.d(TAG, "characteristics_sensor_orientation: " + characteristics_sensor_orientation);
-                            Log.d(TAG, "characteristics_is_front_facing: " + characteristics_is_front_facing);
+                            Log.d(TAG, "characteristics_facing: " + characteristics_facing);
                         }
 
                         CameraController2.this.camera = cam;
@@ -1714,6 +2032,11 @@ public class CameraController2 extends CameraController {
         media_action_sound.load(MediaActionSound.START_VIDEO_RECORDING);
         media_action_sound.load(MediaActionSound.STOP_VIDEO_RECORDING);
         media_action_sound.load(MediaActionSound.SHUTTER_CLICK);
+
+        // expand tonemap curves
+        jtvideo_values = enforceMinTonemapCurvePoints(jtvideo_values_base);
+        jtlog_values = enforceMinTonemapCurvePoints(jtlog_values_base);
+        jtlog2_values = enforceMinTonemapCurvePoints(jtlog2_values_base);
     }
 
     @Override
@@ -1752,7 +2075,76 @@ public class CameraController2 extends CameraController {
             }
         }
     }
-    
+
+    /** Enforce a minimum number of points in tonemap curves - needed due to Galaxy S10e having wrong behaviour if fewer
+     *  than 16 or in some cases 32 points?! OnePlus 3T meanwhile has more gradual behaviour where it gets better at 64 points.
+     */
+    private float [] enforceMinTonemapCurvePoints(float[] in_values) {
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "enforceMinTonemapCurvePoints: " + Arrays.toString(in_values));
+            Log.d(TAG, "length: " + in_values.length/2);
+        }
+        int min_points_c = 64;
+        if( is_samsung ) {
+            // Unfortunately odd bug on Samsung devices (at least S7 and S10e) where if more than 32 control points,
+            // the maximum brightness value is reduced (can best be seen with 64 points, and using gamma==1.0).
+            // Also note that Samsung devices also need at least 16 control points, or in some cases 32, due to problem
+            // where things come out almost all black with some white. So choose 32!
+            //min_points_c = 16;
+            min_points_c = 32;
+        }
+        if( MyDebug.LOG )
+            Log.d(TAG, "min_points_c: " + min_points_c);
+        if( in_values.length >= 2*min_points_c ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "already enough points");
+            return in_values; // fine
+        }
+        List<Pair<Float, Float>> points = new ArrayList<>();
+        for(int i=0;i<in_values.length/2;i++) {
+            Pair<Float, Float> point = new Pair<>(in_values[2*i], in_values[2*i+1]);
+            points.add(point);
+        }
+        if( points.size() < 2 ) {
+            Log.e(TAG, "less than 2 points?!");
+            return in_values;
+        }
+
+        while( points.size() < min_points_c ) {
+            // find largest interval, and subdivide
+            int largest_indx = 0;
+            float largest_dist = 0.0f;
+            for(int i=0;i<points.size()-1;i++) {
+                Pair<Float, Float> p0 = points.get(i);
+                Pair<Float, Float> p1 = points.get(i+1);
+                float dist = p1.first - p0.first;
+                if( dist > largest_dist ) {
+                    largest_indx = i;
+                    largest_dist = dist;
+                }
+            }
+            /*if( MyDebug.LOG )
+                Log.d(TAG, "largest indx " + largest_indx + " dist: " + largest_dist);*/
+            Pair<Float, Float> p0 = points.get(largest_indx);
+            Pair<Float, Float> p1 = points.get(largest_indx+1);
+            float mid_x = 0.5f*(p0.first + p1.first);
+            float mid_y = 0.5f*(p0.second + p1.second);
+            /*if( MyDebug.LOG )
+                Log.d(TAG, "    insert: " + mid_x + " , " + mid_y);*/
+            points.add(largest_indx+1, new Pair<>(mid_x, mid_y));
+        }
+
+        float [] out_values = new float[2*points.size()];
+        for(int i=0;i<points.size();i++) {
+            Pair<Float, Float> point = points.get(i);
+            out_values[2*i] = point.first;
+            out_values[2*i+1] = point.second;
+            /*if( MyDebug.LOG )
+                Log.d(TAG, "out point[" + i + "]: " + point.first + " , " + point.second);*/
+        }
+        return out_values;
+    }
+
     private void closePictureImageReader() {
         if( MyDebug.LOG )
             Log.d(TAG, "closePictureImageReader()");
@@ -1768,10 +2160,15 @@ public class CameraController2 extends CameraController {
     }
 
     private List<String> convertFocusModesToValues(int [] supported_focus_modes_arr, float minimum_focus_distance) {
-        if( MyDebug.LOG )
+        if( MyDebug.LOG ) {
             Log.d(TAG, "convertFocusModesToValues()");
-        if( supported_focus_modes_arr.length == 0 )
+            Log.d(TAG, "supported_focus_modes_arr: " + Arrays.toString(supported_focus_modes_arr));
+        }
+        if( supported_focus_modes_arr.length == 0 ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "no supported focus modes");
             return null;
+        }
         List<Integer> supported_focus_modes = new ArrayList<>();
         for(Integer supported_focus_mode : supported_focus_modes_arr)
             supported_focus_modes.add(supported_focus_mode);
@@ -1796,6 +2193,9 @@ public class CameraController2 extends CameraController {
         }
         if( supported_focus_modes.contains(CaptureRequest.CONTROL_AF_MODE_OFF) ) {
             output_modes.add("focus_mode_infinity");
+            if( MyDebug.LOG ) {
+                Log.d(TAG, " supports focus_mode_infinity");
+            }
             if( minimum_focus_distance > 0.0f ) {
                 output_modes.add("focus_mode_manual2");
                 if( MyDebug.LOG ) {
@@ -1948,20 +2348,6 @@ public class CameraController2 extends CameraController {
             }
         }
 
-        if( MyDebug.LOG ) {
-            int[] ois_modes = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION); // may be null on some devices
-            if (ois_modes != null) {
-                for (int ois_mode : ois_modes) {
-                    if (MyDebug.LOG)
-                        Log.d(TAG, "ois mode: " + ois_mode);
-                    if (ois_mode == CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON) {
-                        if (MyDebug.LOG)
-                            Log.d(TAG, "supports ois");
-                    }
-                }
-            }
-        }
-
         int [] capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
         //boolean capabilities_manual_sensor = false;
         boolean capabilities_manual_post_processing = false;
@@ -2039,10 +2425,14 @@ public class CameraController2 extends CameraController {
                     // (and we don't want to set supports_burst to false for such a resolution).
                     boolean found = false;
                     for(android.util.Size sz : camera_picture_sizes) {
-                        if( sz.equals(camera_size) )
+                        if( sz.equals(camera_size) ) {
                             found = true;
+                            break;
+                        }
                     }
                     if( !found ) {
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "high resolution [non-burst] picture size: " + camera_size.getWidth() + " x " + camera_size.getHeight());
                         CameraController.Size size = new CameraController.Size(camera_size.getWidth(), camera_size.getHeight());
                         size.supports_burst = false;
                         camera_features.picture_sizes.add(size);
@@ -2050,10 +2440,17 @@ public class CameraController2 extends CameraController {
                 }
             }
         }
-        for(android.util.Size camera_size : camera_picture_sizes) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "picture size: " + camera_size.getWidth() + " x " + camera_size.getHeight());
-            camera_features.picture_sizes.add(new CameraController.Size(camera_size.getWidth(), camera_size.getHeight()));
+        if( camera_picture_sizes == null ) {
+            // camera_picture_sizes is null on Samsung Galaxy Note 10+ and S20 for camera ID 4!
+            Log.e(TAG, "no picture sizes returned by getOutputSizes");
+            throw new CameraControllerException();
+        }
+        else {
+            for(android.util.Size camera_size : camera_picture_sizes) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "picture size: " + camera_size.getWidth() + " x " + camera_size.getHeight());
+                camera_features.picture_sizes.add(new CameraController.Size(camera_size.getWidth(), camera_size.getHeight()));
+            }
         }
         // sizes are usually already sorted from high to low, but sort just in case
         // note some devices do have sizes in a not fully sorted order (e.g., Nokia 8)
@@ -2111,17 +2508,24 @@ public class CameraController2 extends CameraController {
         for(int[] r : this.ae_fps_ranges) {
             min_fps = Math.min(min_fps, r[0]);
         }
-        for(android.util.Size camera_size : camera_video_sizes) {
-            if( camera_size.getWidth() > 4096 || camera_size.getHeight() > 2160 )
-                continue; // Nexus 6 returns these, even though not supported?!
-            long mfd = configs.getOutputMinFrameDuration(MediaRecorder.class, camera_size);
-            int  max_fps = (int)((1.0 / mfd) * 1000000000L);
-            ArrayList<int[]> fr = new ArrayList<>();
-            fr.add(new int[] {min_fps, max_fps});
-            CameraController.Size normal_video_size = new CameraController.Size(camera_size.getWidth(), camera_size.getHeight(), fr, false);
-            camera_features.video_sizes.add(normal_video_size);
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "normal video size: " + normal_video_size);
+        if( camera_video_sizes == null ) {
+            // camera_video_sizes is null on Samsung Galaxy Note 10+ and S20 for camera ID 4!
+            Log.e(TAG, "no video sizes returned by getOutputSizes");
+            throw new CameraControllerException();
+        }
+        else {
+            for(android.util.Size camera_size : camera_video_sizes) {
+                if( camera_size.getWidth() > 4096 || camera_size.getHeight() > 2160 )
+                    continue; // Nexus 6 returns these, even though not supported?!
+                long mfd = configs.getOutputMinFrameDuration(MediaRecorder.class, camera_size);
+                int  max_fps = (int)((1.0 / mfd) * 1000000000L);
+                ArrayList<int[]> fr = new ArrayList<>();
+                fr.add(new int[] {min_fps, max_fps});
+                CameraController.Size normal_video_size = new CameraController.Size(camera_size.getWidth(), camera_size.getHeight(), fr, false);
+                camera_features.video_sizes.add(normal_video_size);
+                if( MyDebug.LOG ) {
+                    Log.d(TAG, "normal video size: " + normal_video_size);
+                }
             }
         }
         Collections.sort(camera_features.video_sizes, new CameraController.SizeSorter());
@@ -2170,22 +2574,30 @@ public class CameraController2 extends CameraController {
             // would be good to not assume Open Camera runs in landscape mode (if we ever ran in portrait mode,
             // we'd still want display_size.x > display_size.y as preview resolutions also have width > height)
             if( display_size.x < display_size.y ) {
+                //noinspection SuspiciousNameCombination
                 display_size.set(display_size.y, display_size.x);
             }
             if( MyDebug.LOG )
                 Log.d(TAG, "display_size: " + display_size.x + " x " + display_size.y);
         }
-        for(android.util.Size camera_size : camera_preview_sizes) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "preview size: " + camera_size.getWidth() + " x " + camera_size.getHeight());
-            if( camera_size.getWidth() > display_size.x || camera_size.getHeight() > display_size.y ) {
-                // Nexus 6 returns these, even though not supported?! (get green corruption lines if we allow these)
-                // Google Camera filters anything larger than height 1080, with a todo saying to use device's measurements
-                continue;
-            }
-            camera_features.preview_sizes.add(new CameraController.Size(camera_size.getWidth(), camera_size.getHeight()));
+        if( camera_preview_sizes == null ) {
+            // camera_preview_sizes is null on Samsung Galaxy Note 10+ and S20 for camera ID 4!
+            Log.e(TAG, "no preview sizes returned by getOutputSizes");
+            throw new CameraControllerException();
         }
-        
+        else {
+            for(android.util.Size camera_size : camera_preview_sizes) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "preview size: " + camera_size.getWidth() + " x " + camera_size.getHeight());
+                if( camera_size.getWidth() > display_size.x || camera_size.getHeight() > display_size.y ) {
+                    // Nexus 6 returns these, even though not supported?! (get green corruption lines if we allow these)
+                    // Google Camera filters anything larger than height 1080, with a todo saying to use device's measurements
+                    continue;
+                }
+                camera_features.preview_sizes.add(new CameraController.Size(camera_size.getWidth(), camera_size.getHeight()));
+            }
+        }
+
         if( characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ) {
             camera_features.supported_flash_values = new ArrayList<>();
             camera_features.supported_flash_values.add("flash_off");
@@ -2196,7 +2608,7 @@ public class CameraController2 extends CameraController {
                 camera_features.supported_flash_values.add("flash_red_eye");
             }
         }
-        else if( isFrontFacing() ) {
+        else if( (getFacing() == Facing.FACING_FRONT) ) {
             camera_features.supported_flash_values = new ArrayList<>();
             camera_features.supported_flash_values.add("flash_off");
             camera_features.supported_flash_values.add("flash_frontscreen_auto");
@@ -2219,11 +2631,41 @@ public class CameraController2 extends CameraController {
         if( camera_features.supported_focus_values != null && camera_features.supported_focus_values.contains("focus_mode_manual2") ) {
             camera_features.supports_focus_bracketing = true;
         }
+        if( camera_features.supported_focus_values != null ) {
+            // prefer continuous focus mode
+            if( camera_features.supported_focus_values.contains("focus_mode_continuous_picture") ) {
+                initial_focus_mode = "focus_mode_continuous_picture";
+            }
+            else {
+                // just go with the first one
+                initial_focus_mode = camera_features.supported_focus_values.get(0);
+            }
+            if( MyDebug.LOG )
+                Log.d(TAG, "initial_focus_mode: " + initial_focus_mode);
+        }
+        else {
+            initial_focus_mode = null;
+        }
+
         camera_features.max_num_focus_areas = characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF);
 
         camera_features.is_exposure_lock_supported = true;
 
         camera_features.is_white_balance_lock_supported = true;
+
+        camera_features.is_optical_stabilization_supported = false;
+        int [] supported_optical_stabilization_modes = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION);
+        if( supported_optical_stabilization_modes != null ) {
+            for(int supported_optical_stabilization_mode : supported_optical_stabilization_modes) {
+                if( supported_optical_stabilization_mode == CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON ) {
+                    camera_features.is_optical_stabilization_supported = true;
+                    break;
+                }
+            }
+        }
+        if( MyDebug.LOG )
+            Log.d(TAG, "is_optical_stabilization_supported: " + camera_features.is_optical_stabilization_supported);
+        supports_optical_stabilization = camera_features.is_optical_stabilization_supported;
 
         camera_features.is_video_stabilization_supported = false;
         int [] supported_video_stabilization_modes = characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES);
@@ -2231,6 +2673,7 @@ public class CameraController2 extends CameraController {
             for(int supported_video_stabilization_mode : supported_video_stabilization_modes) {
                 if( supported_video_stabilization_mode == CameraCharacteristics.CONTROL_VIDEO_STABILIZATION_MODE_ON ) {
                     camera_features.is_video_stabilization_supported = true;
+                    break;
                 }
             }
         }
@@ -2243,6 +2686,10 @@ public class CameraController2 extends CameraController {
         int [] white_balance_modes = characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES);
         if( white_balance_modes != null ) {
             for(int value : white_balance_modes) {
+                // n.b., Galaxy S10e for front and ultra-wide cameras offers CONTROL_AWB_MODE_OFF despite
+                // capabilities_manual_post_processing==false; if we don't check for capabilities_manual_post_processing,
+                // adjusting white balance temperature seems to work, but seems safest to require
+                // capabilities_manual_post_processing anyway
                 if( value == CameraMetadata.CONTROL_AWB_MODE_OFF && capabilities_manual_post_processing && allowManualWB() ) {
                     camera_features.supports_white_balance_temperature = true;
                     camera_features.min_temperature = min_white_balance_temperature_c;
@@ -2250,6 +2697,7 @@ public class CameraController2 extends CameraController {
                 }
             }
         }
+        supports_white_balance_temperature = camera_features.supports_white_balance_temperature;
 
         // see note above
         //if( capabilities_manual_sensor )
@@ -2285,7 +2733,14 @@ public class CameraController2 extends CameraController {
                 if( MyDebug.LOG )
                     Log.d(TAG, "tonemap_max_curve_points: " + tonemap_max_curve_points);
                 camera_features.tonemap_max_curve_points = tonemap_max_curve_points;
-                camera_features.supports_tonemap_curve = tonemap_max_curve_points >= tonemap_max_curve_points_c;
+                // for now we only expose supporting of custom tonemap curves if there are enough curve points for all the
+                // profiles we support
+                // remember to divide by 2 if we're comparing against the raw array length!
+                camera_features.supports_tonemap_curve =
+                    tonemap_max_curve_points >= tonemap_log_max_curve_points_c &&
+                            tonemap_max_curve_points >= jtvideo_values.length/2 &&
+                            tonemap_max_curve_points >= jtlog_values.length/2 &&
+                            tonemap_max_curve_points >= jtlog2_values.length/2;
             }
             else {
                 if( MyDebug.LOG )
@@ -2295,27 +2750,18 @@ public class CameraController2 extends CameraController {
         if( MyDebug.LOG )
             Log.d(TAG, "supports_tonemap_curve?: " + camera_features.supports_tonemap_curve);
 
-        {
-            // Calculate view angles
-            // Note this is an approximation (see http://stackoverflow.com/questions/39965408/what-is-the-android-camera2-api-equivalent-of-camera-parameters-gethorizontalvie ).
-            // This does not take into account the aspect ratio of the preview or camera, it's up to the caller to do this (e.g., see Preview.getViewAngleX(), getViewAngleY()).
-            Rect active_size = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            SizeF physical_size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
-            android.util.Size pixel_size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
-            float [] focal_lengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
-            //camera_features.view_angle_x = (float)Math.toDegrees(2.0 * Math.atan2(physical_size.getWidth(), (2.0 * focal_lengths[0])));
-            //camera_features.view_angle_y = (float)Math.toDegrees(2.0 * Math.atan2(physical_size.getHeight(), (2.0 * focal_lengths[0])));
-            float frac_x = ((float)active_size.width())/(float)pixel_size.getWidth();
-            float frac_y = ((float)active_size.height())/(float)pixel_size.getHeight();
-            camera_features.view_angle_x = (float)Math.toDegrees(2.0 * Math.atan2(physical_size.getWidth() * frac_x, (2.0 * focal_lengths[0])));
-            camera_features.view_angle_y = (float)Math.toDegrees(2.0 * Math.atan2(physical_size.getHeight() * frac_y, (2.0 * focal_lengths[0])));
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "frac_x: " + frac_x);
-                Log.d(TAG, "frac_y: " + frac_y);
-                Log.d(TAG, "view_angle_x: " + camera_features.view_angle_x);
-                Log.d(TAG, "view_angle_y: " + camera_features.view_angle_y);
-            }
+        float [] apertures = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES);
+        //float [] apertures = new float[]{1.5f, 1.9f, 2.0f, 2.2f, 2.4f, 4.0f, 8.0f, 16.0f}; // test
+        if( MyDebug.LOG )
+            Log.d(TAG, "apertures: " + Arrays.toString(apertures));
+        // no point supporting if only a single aperture
+        if( apertures != null && apertures.length > 1 ) {
+            camera_features.apertures = apertures;
         }
+
+        SizeF view_angle = CameraControllerManager2.computeViewAngles(characteristics);
+        camera_features.view_angle_x = view_angle.getWidth();
+        camera_features.view_angle_y = view_angle.getHeight();
 
         return camera_features;
     }
@@ -2680,7 +3126,7 @@ public class CameraController2 extends CameraController {
         for(int value2 : values2) {
             String this_value = convertWhiteBalance(value2);
             if( this_value != null ) {
-                if( value2 == CameraMetadata.CONTROL_AWB_MODE_OFF && !allowManualWB() ) {
+                if( value2 == CameraMetadata.CONTROL_AWB_MODE_OFF && !supports_white_balance_temperature ) {
                     // filter
                 }
                 else {
@@ -3140,6 +3586,7 @@ public class CameraController2 extends CameraController {
                 camera_settings.has_iso = false;
                 camera_settings.iso = 0;
             }
+            updateUseFakePrecaptureMode(camera_settings.flash_value);
 
             if( camera_settings.setAEMode(previewBuilder, false) ) {
                 setRepeatingRequest();
@@ -3226,6 +3673,33 @@ public class CameraController2 extends CameraController {
             e.printStackTrace();
         } 
         return true;
+    }
+
+    @Override
+    public void setAperture(float aperture) {
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "setAperture: " + aperture);
+            Log.d(TAG, "current aperture: " + camera_settings.aperture);
+        }
+        if( camera_settings.has_aperture && camera_settings.aperture == aperture ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "already set");
+        }
+        try {
+            camera_settings.has_aperture = true;
+            camera_settings.aperture = aperture;
+            if( camera_settings.setAperture(previewBuilder) ) {
+                setRepeatingRequest();
+            }
+        }
+        catch(CameraAccessException e) {
+            if( MyDebug.LOG ) {
+                Log.e(TAG, "failed to set aperture");
+                Log.e(TAG, "reason: " + e.getReason());
+                Log.e(TAG, "message: " + e.getMessage());
+            }
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -3607,11 +4081,6 @@ public class CameraController2 extends CameraController {
     public void setPreviewSize(int width, int height) {
         if( MyDebug.LOG )
             Log.d(TAG, "setPreviewSize: " + width + " , " + height);
-        /*if( texture != null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "set size of preview texture");
-            texture.setDefaultBufferSize(width, height);
-        }*/
         preview_width = width;
         preview_height = height;
         /*if( previewImageReader != null ) {
@@ -3623,8 +4092,10 @@ public class CameraController2 extends CameraController {
 
     @Override
     public void setVideoStabilization(boolean enabled) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "setVideoStabilization: " + enabled);
         camera_settings.video_stabilization = enabled;
-        camera_settings.setVideoStabilization(previewBuilder);
+        camera_settings.setStabilization(previewBuilder);
         try {
             setRepeatingRequest();
         }
@@ -3639,24 +4110,43 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
+    public boolean getOpticalStabilization() {
+        Integer ois_mode = previewBuilder.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE);
+        if( ois_mode == null )
+            return false;
+        return( ois_mode == CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON );
+    }
+
+    @Override
     public boolean getVideoStabilization() {
         return camera_settings.video_stabilization;
     }
 
     @Override
-    public void setLogProfile(boolean use_log_profile, float log_profile_strength) {
+    public void setTonemapProfile(TonemapProfile tonemap_profile, float log_profile_strength, float gamma) {
         if( MyDebug.LOG ) {
-            Log.d(TAG, "setLogProfile: " + use_log_profile);
+            Log.d(TAG, "setTonemapProfile: " + tonemap_profile);
             Log.d(TAG, "log_profile_strength: " + log_profile_strength);
+            Log.d(TAG, "gamma: " + gamma);
         }
-        if( camera_settings.use_log_profile == use_log_profile && camera_settings.log_profile_strength == log_profile_strength )
+        if( camera_settings.tonemap_profile == tonemap_profile &&
+                camera_settings.log_profile_strength == log_profile_strength &&
+                camera_settings.gamma_profile == gamma )
             return; // no change
-        camera_settings.use_log_profile = use_log_profile;
-        if( use_log_profile )
+
+        camera_settings.tonemap_profile = tonemap_profile;
+
+        if( tonemap_profile == TonemapProfile.TONEMAPPROFILE_LOG )
             camera_settings.log_profile_strength = log_profile_strength;
         else
             camera_settings.log_profile_strength = 0.0f;
-        camera_settings.setLogProfile(previewBuilder);
+
+        if( tonemap_profile == TonemapProfile.TONEMAPPROFILE_GAMMA )
+            camera_settings.gamma_profile = gamma;
+        else
+            camera_settings.gamma_profile = 0.0f;
+
+        camera_settings.setTonemapProfile(previewBuilder);
         try {
             setRepeatingRequest();
         }
@@ -3671,8 +4161,8 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
-    public boolean isLogProfile() {
-        return camera_settings.use_log_profile;
+    public TonemapProfile getTonemapProfile() {
+        return camera_settings.tonemap_profile;
     }
 
     /** For testing.
@@ -3900,6 +4390,7 @@ public class CameraController2 extends CameraController {
         camera_settings.af_mode = focus_mode;
         camera_settings.setFocusMode(previewBuilder);
         camera_settings.setFocusDistance(previewBuilder); // also need to set distance, in case changed between infinity, manual or other modes
+        //camera_settings.setTonemapProfile(previewBuilder); // testing - if using focus mode to test video profiles, see test_new flag
         try {
             setRepeatingRequest();
         }
@@ -4028,6 +4519,8 @@ public class CameraController2 extends CameraController {
         }
         else if( burst_type != BurstType.BURSTTYPE_NONE )
             use_fake_precapture_mode = true;
+        else if( camera_settings.has_iso )
+            use_fake_precapture_mode = true;
         else {
             use_fake_precapture_mode = use_fake_precapture;
         }
@@ -4148,8 +4641,9 @@ public class CameraController2 extends CameraController {
 
     @Override
     public void setLocationInfo(Location location) {
+        // don't log location, in case of privacy!
         if( MyDebug.LOG )
-            Log.d(TAG, "setLocationInfo: " + location.getLongitude() + " , " + location.getLatitude());
+            Log.d(TAG, "setLocationInfo");
         this.camera_settings.location = location;
     }
 
@@ -4257,6 +4751,8 @@ public class CameraController2 extends CameraController {
 
     @Override
     public boolean setFocusAndMeteringArea(List<Area> areas) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "setFocusAndMeteringArea");
         Rect sensor_rect = getViewableRect();
         if( MyDebug.LOG )
             Log.d(TAG, "sensor_rect: " + sensor_rect.left + " , " + sensor_rect.top + " x " + sensor_rect.right + " , " + sensor_rect.bottom);
@@ -4302,6 +4798,8 @@ public class CameraController2 extends CameraController {
     
     @Override
     public void clearFocusAndMetering() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "clearFocusAndMetering");
         Rect sensor_rect = getViewableRect();
         boolean has_focus = false;
         boolean has_metering = false;
@@ -4341,17 +4839,24 @@ public class CameraController2 extends CameraController {
                 e.printStackTrace();
             } 
         }
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "af_regions: " + Arrays.toString(camera_settings.af_regions));
+            Log.d(TAG, "ae_regions: " + Arrays.toString(camera_settings.ae_regions));
+        }
     }
 
     @Override
     public List<Area> getFocusAreas() {
         if( characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) == 0 )
             return null;
+        if( camera_settings.af_regions == null ) {
+            // needed to fix failure on Android emulator in testTakePhotoContinuousNoTouch - can happen when CONTROL_MAX_REGIONS_AF > 0, but Camera only has 1 focus mode so Preview doesn't set focus areas
+            return null;
+        }
         MeteringRectangle [] metering_rectangles = previewBuilder.get(CaptureRequest.CONTROL_AF_REGIONS);
         if( metering_rectangles == null )
             return null;
         Rect sensor_rect = getViewableRect();
-        camera_settings.af_regions[0] = new MeteringRectangle(0, 0, sensor_rect.width()-1, sensor_rect.height()-1, 0);
         if( metering_rectangles.length == 1 && metering_rectangles[0].getRect().left == 0 && metering_rectangles[0].getRect().top == 0 && metering_rectangles[0].getRect().right == sensor_rect.width()-1 && metering_rectangles[0].getRect().bottom == sensor_rect.height()-1 ) {
             // for compatibility with CameraController1
             return null;
@@ -4367,6 +4872,10 @@ public class CameraController2 extends CameraController {
     public List<Area> getMeteringAreas() {
         if( characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) == 0 )
             return null;
+        if( camera_settings.ae_regions == null ) {
+            // needed to fix failure on Android emulator in testTakePhotoContinuousNoTouch - can happen when CONTROL_MAX_REGIONS_AF > 0, but Camera only has 1 focus mode so Preview doesn't set focus areas
+            return null;
+        }
         MeteringRectangle [] metering_rectangles = previewBuilder.get(CaptureRequest.CONTROL_AE_REGIONS);
         if( metering_rectangles == null )
             return null;
@@ -4420,7 +4929,7 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
-    public void setPreviewDisplay(SurfaceHolder holder) throws CameraControllerException {
+    public void setPreviewDisplay(SurfaceHolder holder) {
         if( MyDebug.LOG ) {
             Log.d(TAG, "setPreviewDisplay");
             Log.e(TAG, "SurfaceHolder not supported for CameraController2!");
@@ -4430,9 +4939,11 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
-    public void setPreviewTexture(TextureView texture) throws CameraControllerException {
-        if( MyDebug.LOG )
-            Log.d(TAG, "setPreviewTexture");
+    public void setPreviewTexture(TextureView texture) {
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "setPreviewTexture: " + texture);
+            Log.d(TAG, "surface: " + texture.getSurfaceTexture());
+        }
         if( this.texture != null ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "preview texture already set");
@@ -4526,6 +5037,25 @@ public class CameraController2 extends CameraController {
         return surface_texture;
     }
 
+    @Override
+    public void updatePreviewTexture() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "updatePreviewTexture");
+        if( texture != null ) {
+            if( preview_width == 0 || preview_height == 0 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "preview size not yet set");
+            }
+            else {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "preview size: " + preview_width + " x " + preview_height);
+                this.test_texture_view_buffer_w = preview_width;
+                this.test_texture_view_buffer_h = preview_height;
+                texture.setDefaultBufferSize(preview_width, preview_height);
+            }
+        }
+    }
+
     private void createCaptureSession(final MediaRecorder video_recorder, boolean want_photo_video_recording) throws CameraControllerException {
         if( MyDebug.LOG )
             Log.d(TAG, "create capture session");
@@ -4567,13 +5097,13 @@ public class CameraController2 extends CameraController {
             if( texture != null ) {
                 // need to set the texture size
                 if( MyDebug.LOG )
-                    Log.d(TAG, "set size of preview texture");
+                    Log.d(TAG, "set size of preview texture: " + preview_width + " x " + preview_height);
                 if( preview_width == 0 || preview_height == 0 ) {
                     if( MyDebug.LOG )
                         Log.e(TAG, "application needs to call setPreviewSize()");
                     throw new RuntimeException(); // throw as RuntimeException, as this is a programming error
                 }
-                texture.setDefaultBufferSize(preview_width, preview_height);
+                updatePreviewTexture();
                 // also need to create a new surface for the texture, in case the size has changed - but make sure we remove the old one first!
                 synchronized( background_camera_lock ) {
                     if( surface_texture != null ) {
@@ -4597,7 +5127,7 @@ public class CameraController2 extends CameraController {
             /*if( MyDebug.LOG )
             Log.d(TAG, "preview size: " + previewImageReader.getWidth() + " x " + previewImageReader.getHeight());*/
             if( MyDebug.LOG )
-                Log.d(TAG, "preview size: " + this.preview_width + " x " + this.preview_height);
+                Log.d(TAG, "set preview size: " + this.preview_width + " x " + this.preview_height);
 
             synchronized( background_camera_lock ) {
                 if( video_recorder != null )
@@ -4629,9 +5159,16 @@ public class CameraController2 extends CameraController {
                     synchronized( background_camera_lock ) {
                         captureSession = session;
                         Surface surface = getPreviewSurface();
+                        if( MyDebug.LOG ) {
+                            Log.d(TAG, "add surface to previewBuilder: " + surface);
+                        }
                         previewBuilder.addTarget(surface);
-                        if( video_recorder != null )
+                        if( video_recorder != null ) {
+                            if( MyDebug.LOG ) {
+                                Log.d(TAG, "add video recorder surface to previewBuilder: " + video_recorder_surface);
+                            }
                             previewBuilder.addTarget(video_recorder_surface);
+                        }
                         try {
                             setRepeatingRequest();
                         }
@@ -4710,6 +5247,11 @@ public class CameraController2 extends CameraController {
                     }
                     // n.b., raw not supported for photo snapshots while video recording
                 }
+                else if( want_video_high_speed ) {
+                    // future proofing - at the time of writing want_video_high_speed is only set when recording video,
+                    // but if ever this is changed, can only support the preview_surface as a target
+                    surfaces = Collections.singletonList(preview_surface);
+                }
                 else if( imageReaderRaw != null ) {
                     surfaces = Arrays.asList(preview_surface, imageReader.getSurface(), imageReaderRaw.getSurface());
                 }
@@ -4738,6 +5280,7 @@ public class CameraController2 extends CameraController {
                 }
             }
             if( video_recorder != null && want_video_high_speed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ) {
+            //if( want_video_high_speed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ) {
                 camera.createConstrainedHighSpeedCaptureSession(surfaces,
                     myStateCallback,
                     handler);
@@ -4815,6 +5358,20 @@ public class CameraController2 extends CameraController {
     public void startPreview() throws CameraControllerException {
         if( MyDebug.LOG )
             Log.d(TAG, "startPreview");
+
+        if( !camera_settings.has_af_mode && initial_focus_mode != null ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "user didn't specify focus, so set to: " + initial_focus_mode);
+            // If the caller hasn't set a focus mode, but focus modes are supported, it's still better to explicitly set one rather than leaving to the
+            // builder's default - e.g., problem on Android emulator with LIMITED camera where it only supported infinity focus (CONTROL_AF_MODE_OFF), but
+            // the preview builder defaults to CONTROL_AF_MODE_CONTINUOUS_PICTURE! This meant we froze when trying to take a photo, because we thought
+            // we were in continuous picture mode and so waited in state STATE_WAITING_AUTOFOCUS, but the focus never occurred.
+            // Ideally the caller to CameraController2 (Preview) should always explicitly set a focus mode if at least 1 focus mode is supported. At the
+            // time of writing, Preview only sets a focus if at least 2 focus modes are supported. But even if we fix that in future, still good to have
+            // well defined behaviour at the CameraController level.
+            setFocusValue(initial_focus_mode);
+        }
+
         synchronized( background_camera_lock ) {
             if( captureSession != null ) {
                 try {
@@ -4975,6 +5532,8 @@ public class CameraController2 extends CameraController {
                 return;
             }
             Integer focus_mode = previewBuilder.get(CaptureRequest.CONTROL_AF_MODE);
+            if( MyDebug.LOG )
+                Log.d(TAG, "focus mode: " + (focus_mode == null ? "null" : focus_mode));
             if( focus_mode == null ) {
                 // we preserve the old Camera API where calling autoFocus() on a device without autofocus immediately calls the callback
                 // (unclear if Open Camera needs this, but just to be safe and consistent between camera APIs)
@@ -5026,7 +5585,7 @@ public class CameraController2 extends CameraController {
             this.capture_follows_autofocus_hint = capture_follows_autofocus_hint;
             this.autofocus_cb = cb;
             try {
-                if( use_fake_precapture_mode && !camera_settings.has_iso ) {
+                if( use_fake_precapture_mode ) {
                     boolean want_flash = false;
                     if( camera_settings.flash_value.equals("flash_auto") || camera_settings.flash_value.equals("flash_frontscreen_auto") ) {
                         // calling fireAutoFlash() also caches the decision on whether to flash - otherwise if the flash fires now, we'll then think the scene is bright enough to not need the flash!
@@ -5039,7 +5598,11 @@ public class CameraController2 extends CameraController {
                     if( want_flash ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "turn on torch for fake flash");
-                        afBuilder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+                        if( !camera_settings.has_iso ) {
+                            // in auto-mode, need to ensure CONTROL_AE_MODE isn't est to flash auto/on for torch to work
+                            // in manual-mode, fine as CONTROL_AE_MODE will be off
+                            afBuilder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+                        }
                         afBuilder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
                         test_fake_flash_focus++;
                         fake_precapture_torch_focus_performed = true;
@@ -5389,6 +5952,7 @@ public class CameraController2 extends CameraController {
                         Log.e(TAG, "message: " + e.getMessage());
                     }
                     e.printStackTrace();
+                    //noinspection UnusedAssignment
                     ok = false;
                     jpeg_todo = false;
                     raw_todo = false;
@@ -5399,6 +5963,7 @@ public class CameraController2 extends CameraController {
                     if( MyDebug.LOG )
                         Log.d(TAG, "captureSession already closed!");
                     e.printStackTrace();
+                    //noinspection UnusedAssignment
                     ok = false;
                     jpeg_todo = false;
                     raw_todo = false;
@@ -5793,6 +6358,7 @@ public class CameraController2 extends CameraController {
                         Log.e(TAG, "message: " + e.getMessage());
                     }
                     e.printStackTrace();
+                    //noinspection UnusedAssignment
                     ok = false;
                     jpeg_todo = false;
                     raw_todo = false;
@@ -5803,6 +6369,7 @@ public class CameraController2 extends CameraController {
                     if( MyDebug.LOG )
                         Log.d(TAG, "captureSession already closed!");
                     e.printStackTrace();
+                    //noinspection UnusedAssignment
                     ok = false;
                     jpeg_todo = false;
                     raw_todo = false;
@@ -5910,7 +6477,7 @@ public class CameraController2 extends CameraController {
                         // For Nexus 6, max reported ISO is 1196, so the limit for dark scenes shouldn't be more than this
                         // Nokia 8's max reported ISO is 1551
                         // Note that OnePlus 3T has max reported ISO of 800, but this is a device bug
-                        if( capture_result_iso >= 1100 ) {
+                        if( capture_result_iso >= ISO_FOR_DARK ) {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "optimise for dark scene");
                             n_burst = noise_reduction_low_light ? N_IMAGES_NR_DARK_LOW_LIGHT : N_IMAGES_NR_DARK;
@@ -6134,6 +6701,7 @@ public class CameraController2 extends CameraController {
                         Log.e(TAG, "message: " + e.getMessage());
                     }
                     e.printStackTrace();
+                    //noinspection UnusedAssignment
                     ok = false;
                     jpeg_todo = false;
                     raw_todo = false;
@@ -6231,7 +6799,11 @@ public class CameraController2 extends CameraController {
                 case "flash_on":
                     if(MyDebug.LOG)
                         Log.d(TAG, "turn on torch");
-                    previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+                    if( !camera_settings.has_iso ) {
+                        // in auto-mode, need to ensure CONTROL_AE_MODE isn't est to flash auto/on for torch to work
+                        // in manual-mode, fine as CONTROL_AE_MODE will be off
+                        previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+                    }
                     previewBuilder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
                     test_fake_flash_precapture++;
                     fake_precapture_torch_performed = true;
@@ -6390,8 +6962,7 @@ public class CameraController2 extends CameraController {
                     Log.d(TAG, "use_fake_precapture_mode: " + use_fake_precapture_mode);
                 }
                 // Don't need precapture if flash off or torch
-                // And currently has_iso manual mode doesn't support flash - but just in case that's changed later, we still probably don't want to be doing a precapture...
-                if( camera_settings.has_iso || camera_settings.flash_value.equals("flash_off") || camera_settings.flash_value.equals("flash_torch") ) {
+                if( camera_settings.flash_value.equals("flash_off") || camera_settings.flash_value.equals("flash_torch") || camera_settings.flash_value.equals("flash_frontscreen_torch") ) {
                     call_takePictureAfterPrecapture = true;
                 }
                 else if( use_fake_precapture_mode ) {
@@ -6493,9 +7064,9 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
-    public boolean isFrontFacing() {
+    public Facing getFacing() {
         // cached for performance, as this method is frequently called from Preview.onOrientationChanged
-        return characteristics_is_front_facing;
+        return characteristics_facing;
     }
 
     @Override
@@ -6617,7 +7188,17 @@ public class CameraController2 extends CameraController {
     public long captureResultFrameDuration() {
         return capture_result_frame_duration;
     }
-    
+
+    @Override
+    public boolean captureResultHasAperture() {
+        return capture_result_has_aperture;
+    }
+
+    @Override
+    public float captureResultAperture() {
+        return capture_result_aperture;
+    }
+
     /*
     @Override
     public boolean captureResultHasFocusDistance() {
@@ -7056,6 +7637,18 @@ public class CameraController2 extends CameraController {
                     state = STATE_WAITING_FAKE_PRECAPTURE_DONE;
                     precapture_state_change_time_ms = System.currentTimeMillis();
                 }
+                else if( fake_precapture_turn_on_torch_id == null && camera_settings.has_iso && precapture_state_change_time_ms != -1 && System.currentTimeMillis() - precapture_state_change_time_ms > 100 ) {
+                    // When using manual ISO, we can't make use of changes to the ae_state - but at the same time, we don't
+                    // need ISO/exposure to re-adjust anyway.
+                    // If fake_precapture_turn_on_torch_id != null, we still wait for the physical torch to turn on.
+                    // But if fake_precapture_turn_on_torch_id==null (i.e., for flash_frontscreen_torch), just wait a short
+                    // period to ensure the frontscreen flash has enabled.
+                    if( MyDebug.LOG ) {
+                        Log.d(TAG, "fake precapture started after: " + (System.currentTimeMillis() - precapture_state_change_time_ms));
+                    }
+                    state = STATE_WAITING_FAKE_PRECAPTURE_DONE;
+                    precapture_state_change_time_ms = System.currentTimeMillis();
+                }
                 else if( precapture_state_change_time_ms != -1 && System.currentTimeMillis() - precapture_state_change_time_ms > precapture_start_timeout_c ) {
                     // just in case
                     // always log error, so we can look for it when manually testing with logging disabled
@@ -7100,15 +7693,15 @@ public class CameraController2 extends CameraController {
         private void handleContinuousFocusMove(CaptureResult result) {
             Integer af_state = result.get(CaptureResult.CONTROL_AF_STATE);
             if( af_state != null && af_state == CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN && af_state != last_af_state ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "continuous focusing started");
+                /*if( MyDebug.LOG )
+                    Log.d(TAG, "continuous focusing started");*/
                 if( continuous_focus_move_callback != null ) {
                     continuous_focus_move_callback.onContinuousFocusMove(true);
                 }
             }
             else if( af_state != null && last_af_state == CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN && af_state != last_af_state ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "continuous focusing stopped");
+                /*if( MyDebug.LOG )
+                    Log.d(TAG, "continuous focusing stopped");*/
                 if( continuous_focus_move_callback != null ) {
                     continuous_focus_move_callback.onContinuousFocusMove(false);
                 }
@@ -7125,10 +7718,10 @@ public class CameraController2 extends CameraController {
                     Log.d(TAG, "processAF discarded outdated frame " + result.getFrameNumber() + " vs " + last_process_frame_number);*/
                 return;
             }
-            long debug_time = 0;
+            /*long debug_time = 0;
             if( MyDebug.LOG ) {
                 debug_time = System.currentTimeMillis();
-            }
+            }*/
             last_process_frame_number = result.getFrameNumber();
 
             updateCachedAECaptureStatus(result);
@@ -7139,8 +7732,8 @@ public class CameraController2 extends CameraController {
 
             Integer af_state = result.get(CaptureResult.CONTROL_AF_STATE);
             if( af_state != null && af_state != last_af_state ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "CONTROL_AF_STATE changed from " + last_af_state + " to " + af_state);
+                /*if( MyDebug.LOG )
+                    Log.d(TAG, "CONTROL_AF_STATE changed from " + last_af_state + " to " + af_state);*/
                 last_af_state = af_state;
             }
 
@@ -7252,6 +7845,19 @@ public class CameraController2 extends CameraController {
             else {
                 capture_result_has_focus_distance = false;
             }*/
+            if( modified_from_camera_settings ) {
+                // see note above
+            }
+            else if( result.get(CaptureResult.LENS_APERTURE) != null ) {
+                capture_result_has_aperture = true;
+                capture_result_aperture = result.get(CaptureResult.LENS_APERTURE);
+                /*if( MyDebug.LOG ) {
+                    Log.d(TAG, "capture_result_aperture: " + capture_result_aperture);
+                }*/
+            }
+            else {
+                capture_result_has_aperture = false;
+            }
             {
                 RggbChannelVector vector = result.get(CaptureResult.COLOR_CORRECTION_GAINS);
                 if( modified_from_camera_settings ) {

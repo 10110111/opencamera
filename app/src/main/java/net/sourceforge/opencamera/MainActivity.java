@@ -1,6 +1,7 @@
 package net.sourceforge.opencamera;
 
 import net.sourceforge.opencamera.cameracontroller.CameraController;
+import net.sourceforge.opencamera.cameracontroller.CameraControllerManager;
 import net.sourceforge.opencamera.cameracontroller.CameraControllerManager2;
 import net.sourceforge.opencamera.preview.Preview;
 import net.sourceforge.opencamera.preview.VideoProfile;
@@ -37,6 +38,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -64,8 +66,13 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.renderscript.RenderScript;
 import android.speech.tts.TextToSpeech;
-import android.support.annotation.NonNull;
-import android.support.v4.content.ContextCompat;
+import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
+import androidx.exifinterface.media.ExifInterface;
+
+import android.text.InputFilter;
+import android.text.InputType;
+import android.text.Spanned;
 import android.util.Log;
 import android.view.Display;
 import android.view.GestureDetector;
@@ -78,6 +85,7 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -91,6 +99,8 @@ public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
 
     private static int activity_count = 0;
+
+    private boolean app_is_paused = true;
 
     private SensorManager mSensorManager;
     private Sensor mSensorAccelerometer;
@@ -130,6 +140,22 @@ public class MainActivity extends Activity {
 
     //private boolean ui_placement_right = true;
 
+    private boolean want_no_limits; // whether we want to run with FLAG_LAYOUT_NO_LIMITS
+    private boolean set_window_insets_listener; // whether we've enabled a setOnApplyWindowInsetsListener()
+    private int navigation_gap;
+    public static volatile boolean test_preview_want_no_limits; // test flag, if set to true then instead use test_preview_want_no_limits_value; needs to be static, as it needs to be set before activity is created to take effect
+    public static volatile boolean test_preview_want_no_limits_value;
+
+    // whether this is a multi-camera device (note, this isn't simply having more than 1 camera, but also having more than one with the same facing)
+    // note that in most cases, code should check the MultiCamButtonPreferenceKey preference as well as the is_multi_cam flag,
+    // this can be done via isMultiCamEnabled().
+    private boolean is_multi_cam;
+    // These lists are lists of camera IDs with the same "facing" (front, back or external).
+    // Only initialised if is_multi_cam==true.
+    private List<Integer> back_camera_ids;
+    private List<Integer> front_camera_ids;
+    private List<Integer> other_camera_ids;
+
     private final ToastBoxer switch_video_toast = new ToastBoxer();
     private final ToastBoxer screen_locked_toast = new ToastBoxer();
     private final ToastBoxer stamp_toast = new ToastBoxer();
@@ -137,7 +163,9 @@ public class MainActivity extends Activity {
     private final ToastBoxer white_balance_lock_toast = new ToastBoxer();
     private final ToastBoxer exposure_lock_toast = new ToastBoxer();
     private final ToastBoxer audio_control_toast = new ToastBoxer();
+    private final ToastBoxer store_location_toast = new ToastBoxer();
     private boolean block_startup_toast = false; // used when returning from Settings/Popup - if we're displaying a toast anyway, don't want to display the info toast too
+    private String push_info_toast_text; // can be used to "push" extra text to the info text for showPhotoVideoToast()
 
     // application shortcuts:
     static private final String ACTION_SHORTCUT_CAMERA = "net.sourceforge.opencamera.SHORTCUT_CAMERA";
@@ -158,7 +186,8 @@ public class MainActivity extends Activity {
     public volatile boolean test_low_memory;
     public volatile boolean test_have_angle;
     public volatile float test_angle;
-    public volatile String test_last_saved_image;
+    public volatile Uri test_last_saved_imageuri; // uri of last image; set if using scoped storage OR using SAF
+    public volatile String test_last_saved_image; // filename (including full path) of last image; set if not using scoped storage nor using SAF (i.e., writing using File API)
     public static boolean test_force_supports_camera2; // okay to be static, as this is set for an entire test suite
     public volatile String test_save_settings_file;
 
@@ -200,10 +229,14 @@ public class MainActivity extends Activity {
             if( MyDebug.LOG )
                 Log.d(TAG, "is_test: " + is_test);
         }
-        if( getIntent() != null && getIntent().getExtras() != null ) {
+        /*if( getIntent() != null && getIntent().getExtras() != null ) {
             // whether called from Take Photo widget
             if( MyDebug.LOG )
                 Log.d(TAG, "take_photo?: " + getIntent().getExtras().getBoolean(TakePhoto.TAKE_PHOTO));
+        }*/
+        if( MyDebug.LOG ) {
+            // whether called from Take Photo widget
+            Log.d(TAG, "take_photo?: " + TakePhoto.TAKE_PHOTO);
         }
         if( getIntent() != null && getIntent().getAction() != null ) {
             // invoked via the manifest shortcut?
@@ -252,22 +285,17 @@ public class MainActivity extends Activity {
         // determine whether we support Camera2 API
         initCamera2Support();
 
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN ) {
-            // no point having talkback care about this - and (hopefully) avoid Google Play pre-launch accessibility warnings
-            View container = findViewById(R.id.hide_container);
-            container.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        }
-
         // set up window flags for normal operation
         setWindowFlagsForCamera();
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate: time after setting window flags: " + (System.currentTimeMillis() - debug_time));
 
-        save_location_history = new SaveLocationHistory(this, "save_location_history", getStorageUtils().getSaveLocation());
+        save_location_history = new SaveLocationHistory(this, PreferenceKeys.SaveLocationHistoryBasePreferenceKey, getStorageUtils().getSaveLocation());
+        checkSaveLocations();
         if( applicationInterface.getStorageUtils().isUsingSAF() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "create new SaveLocationHistory for SAF");
-            save_location_history_saf = new SaveLocationHistory(this, "save_location_history_saf", getStorageUtils().getSaveLocationSAF());
+            save_location_history_saf = new SaveLocationHistory(this, PreferenceKeys.SaveLocationHistorySAFBasePreferenceKey, getStorageUtils().getSaveLocationSAF());
         }
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate: time after updating folder history: " + (System.currentTimeMillis() - debug_time));
@@ -294,16 +322,68 @@ public class MainActivity extends Activity {
             Log.d(TAG, "onCreate: time after creating magnetic sensor: " + (System.currentTimeMillis() - debug_time));
 
         // clear any seek bars (just in case??)
-        mainUI.clearSeekBar();
+        mainUI.closeExposureUI();
 
         // set up the camera and its preview
         preview = new Preview(applicationInterface, ((ViewGroup) this.findViewById(R.id.preview)));
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate: time after creating preview: " + (System.currentTimeMillis() - debug_time));
 
+        // Setup multi-camera buttons (must be done after creating preview so we know which Camera API is being used,
+        // and before initialising on-screen visibility).
+        // We only allow the separate icon for switching cameras if:
+        // - there are at least 2 types of "facing" camera, and
+        // - there are at least 2 cameras with the same "facing".
+        // If there are multiple cameras but all with different "facing", then the switch camera
+        // icon is used to iterate over all cameras.
+        // If there are more than two cameras, but all cameras have the same "facing, we still stick
+        // with using the switch camera icon to iterate over all cameras.
+        int n_cameras = preview.getCameraControllerManager().getNumberOfCameras();
+        if( n_cameras > 2 ) {
+            this.back_camera_ids = new ArrayList<>();
+            this.front_camera_ids = new ArrayList<>();
+            this.other_camera_ids = new ArrayList<>();
+            for(int i=0;i<n_cameras;i++) {
+                switch( preview.getCameraControllerManager().getFacing(i) ) {
+                    case FACING_BACK:
+                        back_camera_ids.add(i);
+                        break;
+                    case FACING_FRONT:
+                        front_camera_ids.add(i);
+                        break;
+                    default:
+                        // we assume any unknown cameras are also external
+                        other_camera_ids.add(i);
+                        break;
+                }
+            }
+            boolean multi_same_facing = back_camera_ids.size() >= 2 || front_camera_ids.size() >= 2 || other_camera_ids.size() >= 2;
+            int n_facing = 0;
+            if( back_camera_ids.size() > 0 )
+                n_facing++;
+            if( front_camera_ids.size() > 0 )
+                n_facing++;
+            if( other_camera_ids.size() > 0 )
+                n_facing++;
+            this.is_multi_cam = multi_same_facing && n_facing >= 2;
+            //this.is_multi_cam = false; // test
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "multi_same_facing: " + multi_same_facing);
+                Log.d(TAG, "n_facing: " + n_facing);
+                Log.d(TAG, "is_multi_cam: " + is_multi_cam);
+            }
+
+            if( !is_multi_cam ) {
+                this.back_camera_ids = null;
+                this.front_camera_ids = null;
+                this.other_camera_ids = null;
+            }
+        }
+
         // initialise on-screen button visibility
         View switchCameraButton = findViewById(R.id.switch_camera);
-        switchCameraButton.setVisibility(preview.getCameraControllerManager().getNumberOfCameras() > 1 ? View.VISIBLE : View.GONE);
+        switchCameraButton.setVisibility(n_cameras > 1 ? View.VISIBLE : View.GONE);
+        // switchMultiCameraButton visibility updated below in mainUI.updateOnScreenIcons(), as it also depends on user preference
         View speechRecognizerButton = findViewById(R.id.audio_control);
         speechRecognizerButton.setVisibility(View.GONE); // disabled by default, until the speech recognizer is created
         if( MyDebug.LOG )
@@ -345,6 +425,10 @@ public class MainActivity extends Activity {
         takePhotoButton.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
+                if( !allowLongPress() ) {
+                    // return false, so a regular click will still be triggered when the user releases the touch
+                    return false;
+                }
                 return longClickedTakePhoto();
             }
         });
@@ -373,6 +457,10 @@ public class MainActivity extends Activity {
         galleryButton.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
+                if( !allowLongPress() ) {
+                    // return false, so a regular click will still be triggered when the user releases the touch
+                    return false;
+                }
                 //preview.showToast(null, "Long click");
                 longClickedGallery();
                 return true;
@@ -386,8 +474,38 @@ public class MainActivity extends Activity {
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate: time after creating gesture detector: " + (System.currentTimeMillis() - debug_time));
 
-        // set up listener to handle immersive mode options
         View decorView = getWindow().getDecorView();
+        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+            // set a window insets listener to find the navigation_gap
+            if( MyDebug.LOG )
+                Log.d(TAG, "set a window insets listener");
+            this.set_window_insets_listener = true;
+            decorView.getRootView().setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "inset: " + insets.getSystemWindowInsetRight());
+                    if( navigation_gap == 0 ) {
+                        navigation_gap = insets.getSystemWindowInsetRight();
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "navigation_gap is " + navigation_gap);
+                        // Sometimes when this callback is called, the navigation_gap may still be 0 even if
+                        // the device doesn't have physical navigation buttons - we need to wait
+                        // until we have found a non-zero value before switching to no limits.
+                        // On devices with physical navigation bar, navigation_gap should remain 0
+                        // (and there's no point setting FLAG_LAYOUT_NO_LIMITS)
+                        if( want_no_limits && navigation_gap != 0 ) {
+                            if( MyDebug.LOG )
+                                Log.d(TAG, "set FLAG_LAYOUT_NO_LIMITS");
+                            getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+                        }
+                    }
+                    return getWindow().getDecorView().getRootView().onApplyWindowInsets(insets);
+                }
+            });
+        }
+
+        // set up listener to handle immersive mode options
         decorView.setOnSystemUiVisibilityChangeListener
                 (new View.OnSystemUiVisibilityChangeListener() {
                     @Override
@@ -398,13 +516,19 @@ public class MainActivity extends Activity {
                             return;
                         if( MyDebug.LOG )
                             Log.d(TAG, "onSystemUiVisibilityChange: " + visibility);
+
+                        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+                        String immersive_mode = sharedPreferences.getString(PreferenceKeys.ImmersiveModePreferenceKey, "immersive_mode_low_profile");
+                        boolean hide_ui = immersive_mode.equals("immersive_mode_gui") || immersive_mode.equals("immersive_mode_everything");
+
                         if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "system bars now visible");
                             // The system bars are visible. Make any desired
                             // adjustments to your UI, such as showing the action bar or
                             // other navigational controls.
-                            mainUI.setImmersiveMode(false);
+                            if( hide_ui )
+                                mainUI.setImmersiveMode(false);
                             setImmersiveTimer();
                         }
                         else {
@@ -413,7 +537,8 @@ public class MainActivity extends Activity {
                             // The system bars are NOT visible. Make any desired
                             // adjustments to your UI, such as hiding the action bar or
                             // other navigational controls.
-                            mainUI.setImmersiveMode(true);
+                            if( hide_ui )
+                                mainUI.setImmersiveMode(true);
                         }
                     }
                 });
@@ -473,7 +598,7 @@ public class MainActivity extends Activity {
                     // E.g., we have a "What's New" for 1.44 (64), but then push out a quick fix for 1.44.1 (65). We don't want to
                     // show the dialog again to people who already received 1.44 (64), but we still want to show the dialog to people
                     // upgrading from earlier versions.
-                    int whats_new_version = 74; // 1.47.3
+                    int whats_new_version = 80; // 1.48.3
                     whats_new_version = Math.min(whats_new_version, version_code); // whats_new_version should always be <= version_code, but just in case!
                     if( MyDebug.LOG ) {
                         Log.d(TAG, "whats_new_version: " + whats_new_version);
@@ -560,6 +685,80 @@ public class MainActivity extends Activity {
             Log.d(TAG, "onCreate: total time for Activity startup: " + (System.currentTimeMillis() - debug_time));
     }
 
+    /** Whether to use codepaths that are compatible with scoped storage.
+     */
+    public static boolean useScopedStorage() {
+        //return false;
+        //return true;
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+    }
+
+    public int getNavigationGap() {
+        return want_no_limits ? navigation_gap : 0;
+    }
+
+    /** Whether this is a multi camera device, and the user preference is set to enable the multi-camera button.
+     */
+    public boolean isMultiCamEnabled() {
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
+        return is_multi_cam && sharedPreferences.getBoolean(PreferenceKeys.MultiCamButtonPreferenceKey, true);
+    }
+
+    /** Whether this is a multi camera device, whether or not the user preference is set to enable
+     *  the multi-camera button.
+     */
+    public boolean isMultiCam() {
+        return is_multi_cam;
+    }
+
+    /* Returns the camera Id in use by the preview - or the one we requested, if the camera failed
+     * to open.
+     * Needed as Preview.getCameraId() returns 0 if camera_controller==null, but if the camera
+     * fails to open, we want the switch camera icons to still work as expected!
+     */
+    private int getActualCameraId() {
+        if( preview.getCameraController() == null )
+            return applicationInterface.getCameraIdPref();
+        else
+            return preview.getCameraId();
+    }
+
+    /** Whether the icon switch_multi_camera should be displayed. This is if the following are all
+     *  true:
+     *  - The device is a multi camera device (MainActivity.is_multi_cam==true).
+     *  - The user preference for using the separate icons is enabled
+     *    (PreferenceKeys.MultiCamButtonPreferenceKey).
+     *  - For the current camera ID, there is only one camera with the same front/back/external
+     *    "facing" (e.g., imagine a device with two back cameras, but only one front camera).
+     */
+    public boolean showSwitchMultiCamIcon() {
+        if( isMultiCamEnabled() ) {
+            int cameraId = getActualCameraId();
+            switch( preview.getCameraControllerManager().getFacing(cameraId) ) {
+                case FACING_BACK:
+                    if( back_camera_ids.size() > 0 )
+                        return true;
+                    break;
+                case FACING_FRONT:
+                    if( front_camera_ids.size() > 0 )
+                        return true;
+                    break;
+                default:
+                    if( other_camera_ids.size() > 0 )
+                        return true;
+                    break;
+            }
+        }
+        return false;
+    }
+
+    /** Whether user preference is set to allow long press actions.
+     */
+    private boolean allowLongPress() {
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
+        return sharedPreferences.getBoolean(PreferenceKeys.AllowLongPressPreferenceKey, true);
+    }
+
     /* This method sets the preference defaults which are set specific for a particular device.
      * This method should be called when Open Camera is run for the very first time after installation,
      * or when the user has requested to "Reset settings".
@@ -590,6 +789,7 @@ public class MainActivity extends Activity {
             // to work okay, testing on S7 on RTL, but still keeping the fake flash mode in place for these devices, until we're sure of good
             // behaviour
             // update for testing on Galaxy S10e: still needs fake flash
+            // has also been reported to me that OnePlus 8 and 8 Pro have problems with flash on Camera2 API unless fake flash enabled
             if( MyDebug.LOG )
                 Log.d(TAG, "set fake flash for camera2");
             SharedPreferences.Editor editor = sharedPreferences.edit();
@@ -766,6 +966,154 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Handles users updating to a version with scoped storage (this could be Android 10 users upgrading
+     *  to the version of Open Camera with scoped storage; or users who later upgrade to Android 10).
+     *  With scoped storage, we no longer support saving outside of DCIM/ when not using SAF.
+     *  This updates if necessary both the current save location, and the save folder history.
+     */
+    private void checkSaveLocations() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "checkSaveLocations");
+        if( useScopedStorage() ) {
+            SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
+            boolean any_changes = false;
+            String save_location = getStorageUtils().getSaveLocation();
+            CheckSaveLocationResult res = checkSaveLocation(save_location);
+            if( !res.res ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "save_location not valid with scoped storage: " + save_location);
+                String new_folder;
+                if( res.alt == null ) {
+                    // no alternative, fall back to default
+                    new_folder = "OpenCamera";
+                }
+                else {
+                    // replace with the alternative
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "alternative: " + res.alt);
+                    new_folder = res.alt;
+                }
+                SharedPreferences.Editor editor = sharedPreferences.edit();
+                editor.putString(PreferenceKeys.SaveLocationPreferenceKey, new_folder);
+                editor.apply();
+                any_changes = true;
+            }
+
+            // now check history
+            // go backwards so we can remove easily
+            for(int i=save_location_history.size()-1;i>=0;i--) {
+                String this_location = save_location_history.get(i);
+                res = checkSaveLocation(this_location);
+                if( !res.res ) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "save_location in history " + i + " not valid with scoped storage: " + this_location);
+                    if( res.alt == null ) {
+                        // no alternative, remove
+                        save_location_history.remove(i);
+                    }
+                    else {
+                        // replace with the alternative
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "alternative: " + res.alt);
+                        save_location_history.set(i, res.alt);
+                    }
+                    any_changes = true;
+                }
+            }
+
+            if( any_changes ) {
+                this.save_location_history.updateFolderHistory(this.getStorageUtils().getSaveLocation(), false);
+            }
+        }
+    }
+
+    /** Result from checkSaveLocation. Ideally we'd just use android.util.Pair, but that's not mocked
+     *  for use in unit tests.
+     *  See checkSaveLocation() for documentation.
+     */
+    public static class CheckSaveLocationResult {
+        final boolean res;
+        final String alt;
+
+        public CheckSaveLocationResult(boolean res, String alt) {
+            this.res = res;
+            this.alt = alt;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if( !(o instanceof CheckSaveLocationResult) ) {
+                return false;
+            }
+            CheckSaveLocationResult that = (CheckSaveLocationResult)o;
+            // stop dumb inspection that suggests replacing warning with an error(!) (Objects class is not available on all API versions)
+            // and the other inspection suggests replacing with code that would cause a nullpointerexception
+            //noinspection EqualsReplaceableByObjectsCall,StringEquality
+            return that.res == this.res && ( (that.alt == this.alt) || (that.alt != null && that.alt.equals(this.alt) ) );
+            //return that.res == this.res && ( (that.alt == this.alt) || (that.alt != null && that.alt.equals(this.alt) ) );
+        }
+
+        @Override
+        public int hashCode() {
+            return (res ? 1249 : 1259) ^ (alt == null ? 0 : alt.hashCode());
+        }
+
+        @NonNull
+        @Override
+        public String toString() {
+            return "CheckSaveLocationResult{" + res + " , " + alt + "}";
+        }
+    }
+
+    public static CheckSaveLocationResult checkSaveLocation(final String folder) {
+        return checkSaveLocation(folder, null);
+    }
+
+    /** Checks to see if the supplied folder (in the format as used by our preferences) is supported
+     *  with scoped storage.
+     * @return The Boolean is always non-null, and returns whether the save location is valid.
+     *         If the return is false, then if the String is non-null, this stores an alternative
+     *         form that is valid. If null, there is no valid alternative.
+     * @param base_folder This should normally be null, but can be used to specify manually the
+     *                    folder instead of using StorageUtils.getBaseFolder() - needed for unit
+     *                    tests as Environment class (for Environment.getExternalStoragePublicDirectory())
+     *                    is not mocked.
+     */
+    public static CheckSaveLocationResult checkSaveLocation(final String folder, String base_folder) {
+        /*if( MyDebug.LOG )
+            Log.d(TAG, "DCIM path: " + Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath());*/
+        if( StorageUtils.saveFolderIsFull(folder) ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "checkSaveLocation for full path: " + folder);
+            // But still check to see if the full path is part of DCIM. Since when using the
+            // file dialog method with non-scoped storage, if the user specifies multiple subfolders
+            // e.g. DCIM/blah_a/blah_b, we don't spot that in FolderChooserDialog.useFolder(), and
+            // instead still store that as the full path.
+
+            if( base_folder == null )
+                base_folder = StorageUtils.getBaseFolder().getAbsolutePath();
+            // strip '/' as last character - makes it easier to also spot cases where the folder is the
+            // DCIM folder, but doesn't have a '/' last character
+            if( base_folder.length() >= 1 && base_folder.charAt(base_folder.length()-1) == '/' )
+                base_folder = base_folder.substring(0, base_folder.length()-1);
+            if( MyDebug.LOG )
+                Log.d(TAG, "    compare to base_folder: " + base_folder);
+            String alt_folder = null;
+            if( folder.startsWith(base_folder) ) {
+                alt_folder = folder.substring(base_folder.length());
+                // also need to strip the first '/' if it exists
+                if( alt_folder.length() >= 1 && alt_folder.charAt(0) == '/' )
+                    alt_folder = alt_folder.substring(1);
+            }
+
+            return new CheckSaveLocationResult(false, alt_folder);
+        }
+        else {
+            // already in expected format (indicates a sub-folder of DCIM)
+            return new CheckSaveLocationResult(true, null);
+        }
+    }
+
     private void preloadIcons(int icons_id) {
         long debug_time = 0;
         if( MyDebug.LOG ) {
@@ -784,6 +1132,16 @@ public class MainActivity extends Activity {
             Log.d(TAG, "preloadIcons: total time for preloadIcons: " + (System.currentTimeMillis() - debug_time));
             Log.d(TAG, "size of preloaded_bitmap_resources: " + preloaded_bitmap_resources.size());
         }
+    }
+
+    @Override
+    protected void onStop() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "onStop");
+        super.onStop();
+
+        // we stop location listening in onPause, but done here again just to be certain!
+        applicationInterface.getLocationSupplier().freeLocationListeners();
     }
 
     @Override
@@ -838,6 +1196,9 @@ public class MainActivity extends Activity {
             textToSpeech = null;
         }
 
+        // we stop location listening in onPause, but done here again just to be certain!
+        applicationInterface.getLocationSupplier().freeLocationListeners();
+
         super.onDestroy();
         if( MyDebug.LOG )
             Log.d(TAG, "onDestroy done");
@@ -863,7 +1224,8 @@ public class MainActivity extends Activity {
         if( MyDebug.LOG )
             Log.d(TAG, "getOnlineHelpUrl: " + append);
         // if we change this, remember that any page linked to must abide by Google Play developer policies!
-        return "https://opencamera.sourceforge.io/"+ append;
+        //return "https://opencamera.sourceforge.io/" + append;
+        return "https://opencamera.org.uk/" + append;
     }
 
     void launchOnlineHelp() {
@@ -878,8 +1240,8 @@ public class MainActivity extends Activity {
         if( MyDebug.LOG )
             Log.d(TAG, "launchOnlinePrivacyPolicy");
         // if we change this, remember that any page linked to must abide by Google Play developer policies!
-        //Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://opencamera.sourceforge.io/index.html#privacy"));
-        Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://opencamera.sourceforge.io/privacy_oc.html"));
+        //Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(getOnlineHelpUrl("index.html#privacy")));
+        Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(getOnlineHelpUrl("privacy_oc.html")));
         startActivity(browserIntent);
     }
 
@@ -930,16 +1292,30 @@ public class MainActivity extends Activity {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if( MyDebug.LOG )
             Log.d(TAG, "onKeyDown: " + keyCode);
-        boolean handled = mainUI.onKeyDown(keyCode, event);
-        if( handled )
-            return true;
+        if( camera_in_background ) {
+            // don't allow keys such as volume keys for taking photo when camera in background!
+            if( MyDebug.LOG )
+                Log.d(TAG, "camera is in background");
+        }
+        else {
+            boolean handled = mainUI.onKeyDown(keyCode, event);
+            if( handled )
+                return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if( MyDebug.LOG )
             Log.d(TAG, "onKeyUp: " + keyCode);
-        mainUI.onKeyUp(keyCode, event);
+        if( camera_in_background ) {
+            // don't allow keys such as volume keys for taking photo when camera in background!
+            if( MyDebug.LOG )
+                Log.d(TAG, "camera is in background");
+        }
+        else {
+            mainUI.onKeyUp(keyCode, event);
+        }
         return super.onKeyUp(keyCode, event);
     }
 
@@ -999,6 +1375,7 @@ public class MainActivity extends Activity {
             debug_time = System.currentTimeMillis();
         }
         super.onResume();
+        this.app_is_paused = false; // must be set before initLocation() at least
 
         cancelImageSavingNotification();
 
@@ -1018,6 +1395,7 @@ public class MainActivity extends Activity {
         speechControl.initSpeechRecognizer();
         initLocation();
         initGyroSensors();
+        applicationInterface.getImageSaver().onResume();
         soundPoolManager.initSound();
         soundPoolManager.loadSound(R.raw.mybeep);
         soundPoolManager.loadSound(R.raw.mybeep_hi);
@@ -1026,9 +1404,42 @@ public class MainActivity extends Activity {
 
         updateGalleryIcon(); // update in case images deleted whilst idle
 
-        applicationInterface.reset(); // should be called before opening the camera in preview.onResume()
+        applicationInterface.reset(false); // should be called before opening the camera in preview.onResume()
 
-        preview.onResume();
+        if( !camera_in_background ) {
+            // don't restart camera if we're showing a dialog or settings
+            preview.onResume();
+        }
+
+        {
+            // show a toast for the camera if it's not the first for front of back facing (otherwise on multi-front/back camera
+            // devices, it's easy to forget if set to a different camera)
+            // but we only show this when resuming, not every time the camera opens
+            int cameraId = applicationInterface.getCameraIdPref();
+            if( cameraId > 0 ) {
+                CameraControllerManager camera_controller_manager = preview.getCameraControllerManager();
+                CameraController.Facing front_facing = camera_controller_manager.getFacing(cameraId);
+                if( MyDebug.LOG )
+                    Log.d(TAG, "front_facing: " + front_facing);
+                if( camera_controller_manager.getNumberOfCameras() > 2 ) {
+                    boolean camera_is_default = true;
+                    for(int i=0;i<cameraId;i++) {
+                        CameraController.Facing that_front_facing = camera_controller_manager.getFacing(i);
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "camera " + i + " that_front_facing: " + that_front_facing);
+                        if( that_front_facing == front_facing ) {
+                            // found an earlier camera with same front/back facing
+                            camera_is_default = false;
+                        }
+                    }
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "camera_is_default: " + camera_is_default);
+                    if( !camera_is_default ) {
+                        this.pushCameraIdToast(cameraId);
+                    }
+                }
+            }
+        }
 
         if( MyDebug.LOG ) {
             Log.d(TAG, "onResume: total time to resume: " + (System.currentTimeMillis() - debug_time));
@@ -1056,6 +1467,8 @@ public class MainActivity extends Activity {
             debug_time = System.currentTimeMillis();
         }
         super.onPause(); // docs say to call this before freeing other things
+        this.app_is_paused = true;
+
         mainUI.destroyPopup(); // important as user could change/reset settings from Android settings when pausing
         mSensorManager.unregisterListener(accelerometerListener);
         magneticSensor.unregisterMagneticListener(mSensorManager);
@@ -1073,6 +1486,7 @@ public class MainActivity extends Activity {
         applicationInterface.getLocationSupplier().freeLocationListeners();
         applicationInterface.stopPanorama(true); // in practice not needed as we should stop panorama when camera is closed, but good to do it explicitly here, before disabling the gyro sensors
         applicationInterface.getGyroSensor().disableSensors();
+        applicationInterface.getImageSaver().onPause();
         soundPoolManager.releaseSound();
         applicationInterface.clearLastImages(); // this should happen when pausing the preview, but call explicitly just to be safe
         applicationInterface.getDrawPreview().clearGhostImage();
@@ -1082,13 +1496,16 @@ public class MainActivity extends Activity {
             createImageSavingNotification();
         }
 
+        // intentionally do this again, just in case something turned location on since - keep this right at the end:
+        applicationInterface.getLocationSupplier().freeLocationListeners();
+
         if( MyDebug.LOG ) {
             Log.d(TAG, "onPause: total time to pause: " + (System.currentTimeMillis() - debug_time));
         }
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
         if( MyDebug.LOG )
             Log.d(TAG, "onConfigurationChanged()");
         // configuration change can include screen orientation (landscape/portrait) when not locked (when settings is open)
@@ -1214,6 +1631,9 @@ public class MainActivity extends Activity {
         applicationInterface.getDrawPreview().updateSettings(); // because we cache the geotagging setting
         initLocation(); // required to enable or disable GPS, also requests permission if necessary
         this.closePopup();
+
+        String message = getResources().getString(R.string.preference_location) + ": " + getResources().getString(value ? R.string.on : R.string.off);
+        preview.showToast(store_location_toast, message);
     }
 
     public void clickedTextStamp(View view) {
@@ -1369,9 +1789,7 @@ public class MainActivity extends Activity {
                     }
                 }
                 if( has_audio_permission ) {
-                    String toast_string = this.getResources().getString(R.string.speech_recognizer_started) + "\n" +
-                            this.getResources().getString(R.string.speech_recognizer_extra_info);
-                    preview.showToast(audio_control_toast, toast_string);
+                    speechControl.showToast(true);
                     speechControl.startSpeechRecognizerIntent();
                     speechControl.speechRecognizerStarted();
                 }
@@ -1388,26 +1806,124 @@ public class MainActivity extends Activity {
     }
 
     /* Returns the cameraId that the "Switch camera" button will switch to.
+     * Note that this may not necessarily be the next camera ID, on multi camera devices (if
+     * isMultiCamEnabled() returns true).
      */
     public int getNextCameraId() {
         if( MyDebug.LOG )
             Log.d(TAG, "getNextCameraId");
-        int cameraId = preview.getCameraId();
+        int cameraId = getActualCameraId();
         if( MyDebug.LOG )
             Log.d(TAG, "current cameraId: " + cameraId);
         if( this.preview.canSwitchCamera() ) {
-            int n_cameras = preview.getCameraControllerManager().getNumberOfCameras();
-            cameraId = (cameraId+1) % n_cameras;
+            if( isMultiCamEnabled() ) {
+                // don't use preview.getCameraController(), as it may be null if user quickly switches between cameras
+                switch( preview.getCameraControllerManager().getFacing(cameraId) ) {
+                    case FACING_BACK:
+                        if( front_camera_ids.size() > 0 )
+                            cameraId = front_camera_ids.get(0);
+                        else if( other_camera_ids.size() > 0 )
+                            cameraId = other_camera_ids.get(0);
+                        break;
+                    case FACING_FRONT:
+                        if( other_camera_ids.size() > 0 )
+                            cameraId = other_camera_ids.get(0);
+                        else if( back_camera_ids.size() > 0 )
+                            cameraId = back_camera_ids.get(0);
+                        break;
+                    default:
+                        if( back_camera_ids.size() > 0 )
+                            cameraId = back_camera_ids.get(0);
+                        else if( front_camera_ids.size() > 0 )
+                            cameraId = front_camera_ids.get(0);
+                        break;
+                }
+            }
+            else {
+                int n_cameras = preview.getCameraControllerManager().getNumberOfCameras();
+                cameraId = (cameraId+1) % n_cameras;
+            }
         }
         if( MyDebug.LOG )
             Log.d(TAG, "next cameraId: " + cameraId);
         return cameraId;
     }
 
+    /* Returns the cameraId that the "Switch multi camera" button will switch to.
+     * Should only be called if isMultiCamEnabled() returns true.
+     */
+    public int getNextMultiCameraId() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "getNextMultiCameraId");
+        if( !isMultiCamEnabled() ) {
+            Log.e(TAG, "getNextMultiCameraId() called but not in multi-cam mode");
+            throw new RuntimeException("getNextMultiCameraId() called but not in multi-cam mode");
+        }
+        List<Integer> camera_set;
+        // don't use preview.getCameraController(), as it may be null if user quickly switches between cameras
+        int currCameraId = getActualCameraId();
+        switch( preview.getCameraControllerManager().getFacing(currCameraId) ) {
+            case FACING_BACK:
+                camera_set = back_camera_ids;
+                break;
+            case FACING_FRONT:
+                camera_set = front_camera_ids;
+                break;
+            default:
+                camera_set = other_camera_ids;
+                break;
+        }
+        int cameraId;
+        int indx = camera_set.indexOf(currCameraId);
+        if( indx == -1 ) {
+            Log.e(TAG, "camera id not in current camera set");
+            // this shouldn't happen, but if it does, revert to the first camera id in the set
+            cameraId = camera_set.get(0);
+        }
+        else {
+            indx = (indx+1) % camera_set.size();
+            cameraId = camera_set.get(indx);
+        }
+        if( MyDebug.LOG )
+            Log.d(TAG, "next multi cameraId: " + cameraId);
+        return cameraId;
+    }
+
+    private void pushCameraIdToast(int cameraId) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "pushCameraIdToast: " + cameraId);
+        if( preview.getCameraControllerManager().getNumberOfCameras() > 2 ) {
+            // telling the user which camera is pointless for only two cameras, but on devices that now
+            // expose many cameras it can be confusing, so show a toast to at least display the id
+            String description = preview.getCameraControllerManager().getDescription(this, cameraId);
+            if( description != null ) {
+                String toast_string = description + ": ";
+                toast_string += getResources().getString(R.string.camera_id) + " " + cameraId;
+                //preview.showToast(null, toast_string);
+                this.push_info_toast_text = toast_string;
+            }
+        }
+    }
+
+    private void userSwitchToCamera(int cameraId) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "userSwitchToCamera: " + cameraId);
+        View switchCameraButton = findViewById(R.id.switch_camera);
+        View switchMultiCameraButton = findViewById(R.id.switch_multi_camera);
+        // prevent slowdown if user repeatedly clicks:
+        switchCameraButton.setEnabled(false);
+        switchMultiCameraButton.setEnabled(false);
+        applicationInterface.reset(true);
+        this.preview.setCamera(cameraId);
+        switchCameraButton.setEnabled(true);
+        switchMultiCameraButton.setEnabled(true);
+        // no need to call mainUI.setSwitchCameraContentDescription - this will be called from Preview.cameraSetup when the
+        // new camera is opened
+    }
+
     /**
      * Selects the next camera on the phone - in practice, switches between
      * front and back cameras
-     * @param view
      */
     public void clickedSwitchCamera(View view) {
         if( MyDebug.LOG )
@@ -1420,28 +1936,45 @@ public class MainActivity extends Activity {
         this.closePopup();
         if( this.preview.canSwitchCamera() ) {
             int cameraId = getNextCameraId();
-            if( preview.getCameraControllerManager().getNumberOfCameras() > 2 ) {
-                // telling the user which camera is pointless for only two cameras, but on devices that now
-                // expose many cameras it can be confusing, so show a toast to at least display the id
-                String toast_string = getResources().getString(
-                        preview.getCameraControllerManager().isFrontFacing(cameraId) ? R.string.front_camera : R.string.back_camera ) +
-                        " : " + getResources().getString(R.string.camera_id) + " " + cameraId;
-                preview.showToast(null, toast_string);
+            if( !isMultiCamEnabled() ) {
+                pushCameraIdToast(cameraId);
             }
+            else {
+                // In multi-cam mode, no need to show the toast when just switching between front and back cameras.
+                // But it is useful to clear an active fake toast, otherwise have issue if the user uses
+                // clickedSwitchMultiCamera() (which displays a fake toast for the camera via the info toast), then
+                // immediately uses clickedSwitchCamera() - the toast for the wrong camera will still be lingering
+                // until it expires, which looks a bit strange.
+                // (If using non-fake toasts, this isn't an issue, at least on Android 10+, as now toasts seem to
+                // disappear when the user touches the screen anyway.)
+                preview.clearActiveFakeToast();
+            }
+            userSwitchToCamera(cameraId);
+        }
+    }
 
-            View switchCameraButton = findViewById(R.id.switch_camera);
-            switchCameraButton.setEnabled(false); // prevent slowdown if user repeatedly clicks
-            applicationInterface.reset();
-            this.preview.setCamera(cameraId);
-            switchCameraButton.setEnabled(true);
-            // no need to call mainUI.setSwitchCameraContentDescription - this will be called from PreviewcameraSetup when the
-            // new camera is opened
+    public void clickedSwitchMultiCamera(View view) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "clickedSwitchMultiCamera");
+        if( !isMultiCamEnabled() ) {
+            Log.e(TAG, "switch multi camera icon shouldn't have been visible");
+            return;
+        }
+        if( preview.isOpeningCamera() ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "already opening camera in background thread");
+            return;
+        }
+        this.closePopup();
+        if( this.preview.canSwitchCamera() ) {
+            int cameraId = getNextMultiCameraId();
+            pushCameraIdToast(cameraId);
+            userSwitchToCamera(cameraId);
         }
     }
 
     /**
      * Toggles Photo/Video mode
-     * @param view
      */
     public void clickedSwitchVideo(View view) {
         if( MyDebug.LOG )
@@ -1457,14 +1990,14 @@ public class MainActivity extends Activity {
 
         View switchVideoButton = findViewById(R.id.switch_video);
         switchVideoButton.setEnabled(false); // prevent slowdown if user repeatedly clicks
-        applicationInterface.reset();
+        applicationInterface.reset(false);
         this.preview.switchVideo(false, true);
         switchVideoButton.setEnabled(true);
 
         mainUI.setTakePhotoIcon();
         mainUI.setPopupIcon(); // needed as turning to video mode or back can turn flash mode off or back on
 
-        // ensure icons invisible if they're affected by being in video mode or not
+        // ensure icons invisible if they're affected by being in video mode or not (e.g., on-screen RAW icon)
         // (if enabling them, we'll make the icon visible later on)
         checkDisableGUIIcons();
 
@@ -1532,7 +2065,7 @@ public class MainActivity extends Activity {
         private static final String TAG = "PreferencesListener";
 
         private boolean any_significant_change; // whether any changes that require updateForSettings have been made since startListening()
-        private boolean any_change; // whether any changes that require updateForSettings have been made since startListening()
+        private boolean any_change; // whether any changes have been made since startListening()
 
         void startListening() {
             if( MyDebug.LOG )
@@ -1562,23 +2095,35 @@ public class MainActivity extends Activity {
 
             switch( key ) {
                 // we whitelist preferences where we're sure that we don't need to call updateForSettings() if they've changed
+                //case "preference_face_detection": // need to update camera controller
                 case "preference_timer":
                 case "preference_burst_mode":
                 case "preference_burst_interval":
-                    //case "preference_ghost_image": // don't whitelist this, as may need to reload ghost image (at fullscreen resolution) if "last" is enabled
                 case "preference_touch_capture":
                 case "preference_pause_preview":
                 case "preference_shutter_sound":
                 case "preference_timer_beep":
                 case "preference_timer_speak":
                 case "preference_volume_keys":
+                    //case "preference_audio_control": // need to update the UI
                 case "preference_audio_noise_control_sensitivity":
+                    //case "preference_enable_remote": // handled below
+                    //case "preference_remote_type":
+                    //case "preference_remote_device_name": // handled below
+                    //case "preference_remote_disconnect_screen_dim":
+                    //case "preference_water_type": // handled below
+                case "preference_lock_orientation":
+                    //case "preference_save_location": // we could probably whitelist this, but accessed it a lot of places...
                 case "preference_using_saf":
                 case "preference_save_photo_prefix":
                 case "preference_save_video_prefix":
                 case "preference_save_zulu_time":
                 case "preference_show_when_locked":
                 case "preference_startup_focus":
+                    //case "preference_preview_size": // need to update preview
+                    //case "preference_ghost_image": // don't whitelist this, as may need to reload ghost image (at fullscreen resolution) if "last" is enabled
+                case "ghost_image_alpha":
+                case "preference_focus_assist":
                 case "preference_show_zoom":
                 case "preference_show_angle":
                 case "preference_show_angle_line":
@@ -1590,30 +2135,93 @@ public class MainActivity extends Activity {
                 case "preference_show_time":
                 case "preference_free_memory":
                 case "preference_show_iso":
+                case "preference_histogram":
+                case "preference_zebra_stripes":
+                case "preference_zebra_stripes_foreground_color":
+                case "preference_zebra_stripes_background_color":
+                case "preference_focus_peaking":
+                case "preference_focus_peaking_color":
+                case "preference_show_video_max_amp":
                 case "preference_grid":
                 case "preference_crop_guide":
-                case "preference_show_toasts":
                 case "preference_thumbnail_animation":
                 case "preference_take_photo_border":
+                    //case "preference_rotate_preview": // need to update the Preview
+                    //case "preference_ui_placement": // need to update the UI
+                    //case "preference_immersive_mode": // probably could whitelist?
+                    //case "preference_show_face_detection": // need to update the UI
+                    //case "preference_show_cycle_flash": // need to update the UI
+                    //case "preference_show_auto_level": // need to update the UI
+                    //case "preference_show_stamp": // need to update the UI
+                    //case "preference_show_textstamp": // need to update the UI
+                    //case "preference_show_store_location": // need to update the UI
+                    //case "preference_show_cycle_raw": // need to update the UI
+                    //case "preference_show_white_balance_lock": // need to update the UI
+                    //case "preference_show_exposure_lock": // need to update the UI
+                    //case "preference_show_zoom_controls": // need to update the UI
+                    //case "preference_show_zoom_slider_controls": // need to update the UI
+                    //case "preference_show_take_photo": // need to update the UI
+                case "preference_show_toasts":
+                case "preference_show_whats_new":
+                //case "preference_multi_cam_button": // need to update the UI
                 case "preference_keep_display_on":
                 case "preference_max_brightness":
+                    //case "preference_resolution": // need to set up camera controller and preview
+                    //case "preference_quality": // need to set up camera controller
+                    //case "preference_image_format": // need to set up camera controller (as it can affect the image quality that we set)
+                    //case "preference_raw": // need to update as it affects how we set up camera controller
+                    //case "preference_raw_expo_bracketing": // as above
+                    //case "preference_raw_focus_bracketing": // as above
+                    //case "preference_nr_save": // we could probably whitelist this, but have not done so in case in future we allow RAW to be saved for the base image
                     //case "preference_hdr_save_expo": // we need to update if this is changed, as it affects whether we request RAW or not in HDR mode when RAW is enabled
+                case "preference_hdr_contrast_enhancement":
+                    //case "preference_expo_bracketing_n_images": // need to set up camera controller
+                    //case "preference_expo_bracketing_stops": // need to set up camera controller
+                case "preference_panorama_crop":
+                    //case "preference_panorama_save": // we could probably whitelist this, but have not done so in case in future we allow RAW to be saved for the base images
                 case "preference_front_camera_mirror":
+                case "preference_exif_artist":
+                case "preference_exif_copyright":
                 case "preference_stamp":
                 case "preference_stamp_dateformat":
                 case "preference_stamp_timeformat":
                 case "preference_stamp_gpsformat":
+                case "preference_stamp_geo_address":
+                case "preference_units_distance":
                 case "preference_textstamp":
                 case "preference_stamp_fontsize":
                 case "preference_stamp_font_color":
                 case "preference_stamp_style":
+                    //case "preference_camera2_fake_flash": // need to update camera controller
+                    //case "preference_camera2_fast_burst": // could probably whitelist?
+                    //case "preference_camera2_photo_video_recording": // need to update camera controller
                 case "preference_background_photo_saving":
+                    //case "preference_video_quality": // need to update camera controller and preview
+                    //case "preference_video_stabilization": // need to update camera controller
+                    //case "preference_video_output_format": // could probably whitelist, but safest to restart camera
+                    //case "preference_video_log": // need to update camera controller
+                    //case "preference_video_profile_gamma": // as above
+                    //case "preference_video_max_duration": // could probably whitelist, but safest to restart camera
+                    //case "preference_video_restart": // could probably whitelist, but safest to restart camera
+                    //case "preference_video_max_filesize": // could probably whitelist, but safest to restart camera
+                    //case "preference_video_restart_max_filesize": // could probably whitelist, but safest to restart camera
                 case "preference_record_audio":
                 case "preference_record_audio_src":
                 case "preference_record_audio_channels":
                 case "preference_lock_video":
                 case "preference_video_subtitle":
+                    //case "preference_video_bitrate": // could probably whitelist, but safest to restart camera
+                    //case "preference_video_fps": // could probably whitelist, but safest to restart camera
+                    //case "preference_force_video_4k": // could probably whitelist, but safest to restart camera
+                case "preference_video_low_power_check":
+                case "preference_video_flash":
+                    //case "preference_location": // need to enable/disable gps listeners etc
+                    //case "preference_gps_direction": // need to update listeners
                 case "preference_require_location":
+                    //case "preference_antibanding": // need to set up camera controller
+                    //case "preference_edge_mode": // need to set up camera controller
+                    //case "preference_noise_reduction_mode": // need to set up camera controller
+                    //case "preference_camera_api": // no point whitelisting as we restart anyway
                     if( MyDebug.LOG )
                         Log.d(TAG, "this change doesn't require update");
                     break;
@@ -1662,6 +2270,10 @@ public class MainActivity extends Activity {
         bundle.putInt("nCameras", preview.getCameraControllerManager().getNumberOfCameras());
         bundle.putString("camera_api", this.preview.getCameraAPI());
         bundle.putBoolean("using_android_l", this.preview.usingCamera2API());
+        if( this.preview.getCameraController() != null ) {
+            bundle.putInt("camera_orientation", this.preview.getCameraController().getCameraOrientation());
+        }
+        bundle.putString("photo_mode_string", getPhotoModeString(applicationInterface.getPhotoMode(), true));
         bundle.putBoolean("supports_auto_stabilise", this.supports_auto_stabilise);
         bundle.putBoolean("supports_flash", this.preview.supportsFlash());
         bundle.putBoolean("supports_force_video_4k", this.supports_force_video_4k);
@@ -1672,6 +2284,7 @@ public class MainActivity extends Activity {
         bundle.putBoolean("supports_hdr", this.supportsHDR());
         bundle.putBoolean("supports_nr", this.supportsNoiseReduction());
         bundle.putBoolean("supports_panorama", this.supportsPanorama());
+        bundle.putBoolean("has_gyro_sensors", applicationInterface.getGyroSensor().hasSensors());
         bundle.putBoolean("supports_expo_bracketing", this.supportsExpoBracketing());
         bundle.putBoolean("supports_preview_bitmaps", this.supportsPreviewBitmaps());
         bundle.putInt("max_expo_bracketing_n_images", this.maxExpoBracketingNImages());
@@ -1689,7 +2302,11 @@ public class MainActivity extends Activity {
         bundle.putBoolean("supports_white_balance_temperature", this.preview.supportsWhiteBalanceTemperature());
         bundle.putInt("white_balance_temperature_min", this.preview.getMinimumWhiteBalanceTemperature());
         bundle.putInt("white_balance_temperature_max", this.preview.getMaximumWhiteBalanceTemperature());
+        bundle.putBoolean("is_multi_cam", this.is_multi_cam);
+        bundle.putBoolean("supports_optical_stabilization", this.preview.supportsOpticalStabilization());
+        bundle.putBoolean("optical_stabilization_enabled", this.preview.getOpticalStabilization());
         bundle.putBoolean("supports_video_stabilization", this.preview.supportsVideoStabilization());
+        bundle.putBoolean("video_stabilization_enabled", this.preview.getVideoStabilization());
         bundle.putBoolean("can_disable_shutter_sound", this.preview.canDisableShutterSound());
         bundle.putInt("tonemap_max_curve_points", this.preview.getTonemapMaxCurvePoints());
         bundle.putBoolean("supports_tonemap_curve", this.preview.supportsTonemapCurve());
@@ -1882,7 +2499,7 @@ public class MainActivity extends Activity {
         preferencesListener.startListening();
 
         showPreview(false);
-        setWindowFlagsForSettings();
+        setWindowFlagsForSettings(); // important to do after passing camera info into bundle, since this will close the camera
         MyPreferenceFragment fragment = new MyPreferenceFragment();
         fragment.setArguments(bundle);
         // use commitAllowingStateLoss() instead of commit(), does to "java.lang.IllegalStateException: Can not perform this action after onSaveInstanceState" crash seen on Google Play
@@ -1890,20 +2507,25 @@ public class MainActivity extends Activity {
         getFragmentManager().beginTransaction().add(android.R.id.content, fragment, "PREFERENCE_FRAGMENT").addToBackStack(null).commitAllowingStateLoss();
     }
 
-    public void updateForSettings() {
-        updateForSettings(null, false);
+    public void updateForSettings(boolean update_camera) {
+        updateForSettings(update_camera, null, false);
     }
 
-    public void updateForSettings(String toast_message) {
-        updateForSettings(toast_message, false);
+    public void updateForSettings(boolean update_camera, String toast_message) {
+        updateForSettings(update_camera, toast_message, false);
     }
 
     /** Must be called when an settings (as stored in SharedPreferences) are made, so we can update the
      *  camera, and make any other necessary changes.
+     * @param update_camera Whether the camera needs to be updated. Can be set to false if we know changes
+     *                      haven't been made to the camera settings, or we already reopened it.
+     * @param toast_message If non-null, display this toast instead of the usual camera "startup" toast
+     *                      that's shown in showPhotoVideoToast(). If non-null but an empty string, then
+     *                      this means no toast is shown at all.
      * @param keep_popup If false, the popup will be closed and destroyed. Set to true if you're sure
      *                   that the changed setting isn't one that requires the PopupView to be recreated
      */
-    public void updateForSettings(String toast_message, boolean keep_popup) {
+    public void updateForSettings(boolean update_camera, String toast_message, boolean keep_popup) {
         if( MyDebug.LOG ) {
             Log.d(TAG, "updateForSettings()");
             if( toast_message != null ) {
@@ -1943,7 +2565,7 @@ public class MainActivity extends Activity {
         // doesn't happen if we allow using Camera2 API on Nexus 7, but reopen for consistency (and changing scene modes via
         // popup menu no longer should be calling updateForSettings() for Camera2, anyway)
         boolean need_reopen = false;
-        if( preview.getCameraController() != null ) {
+        if( update_camera && preview.getCameraController() != null ) {
             SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
             String scene_mode = preview.getCameraController().getSceneMode();
             if( MyDebug.LOG )
@@ -1964,6 +2586,20 @@ public class MainActivity extends Activity {
                     if( applicationInterface.useCamera2FakeFlash() != camera2_fake_flash ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "camera2_fake_flash changed");
+                        need_reopen = true;
+                    }
+                }
+            }
+
+            if( !need_reopen ) {
+                CameraController.TonemapProfile old_tonemap_profile = preview.getCameraController().getTonemapProfile();
+                if( old_tonemap_profile != CameraController.TonemapProfile.TONEMAPPROFILE_OFF ) {
+                    CameraController.TonemapProfile new_tonemap_profile = applicationInterface.getVideoTonemapProfile();
+                    if( new_tonemap_profile != CameraController.TonemapProfile.TONEMAPPROFILE_OFF && new_tonemap_profile != old_tonemap_profile ) {
+                        // needed for Galaxy S10e when changing from TONEMAP_MODE_CONTRAST_CURVE to TONEMAP_MODE_PRESET_CURVE,
+                        // otherwise the contrast curve remains active!
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "switching between tonemap profiles");
                         need_reopen = true;
                     }
                 }
@@ -1989,14 +2625,23 @@ public class MainActivity extends Activity {
         }
 
         speechControl.initSpeechRecognizer(); // in case we've enabled or disabled speech recognizer
-        initLocation(); // in case we've enabled or disabled GPS
-        initGyroSensors(); // in case we've entered or left panoram
+
+        // we no longer call initLocation() here (for having enabled or disabled geotagging), as that's
+        // done in setWindowFlagsForCamera() - important not to call it here as well, otherwise if
+        // permission wasn't granted, we'll ask for permission twice in a row (on Android 9 or earlier
+        // at least)
+        //initLocation(); // in case we've enabled or disabled GPS
+
+        initGyroSensors(); // in case we've entered or left panorama
         if( MyDebug.LOG ) {
             Log.d(TAG, "updateForSettings: time after init speech and location: " + (System.currentTimeMillis() - debug_time));
         }
         if( toast_message != null )
             block_startup_toast = true;
-        if( need_reopen || preview.getCameraController() == null ) { // if camera couldn't be opened before, might as well try again
+        if( !update_camera ) {
+            // don't try to update camera
+        }
+        else if( need_reopen || preview.getCameraController() == null ) { // if camera couldn't be opened before, might as well try again
             preview.reopenCamera();
             if( MyDebug.LOG ) {
                 Log.d(TAG, "updateForSettings: time after reopen: " + (System.currentTimeMillis() - debug_time));
@@ -2035,45 +2680,67 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void checkDisableGUIIcons() {
+    /** Disables the optional on-screen icons if either user doesn't want to enable them, or not
+     *  supported). Note that displaying icons is done via MainUI.showGUI.
+     * @return Whether an icon's visibility was changed.
+     */
+    private boolean checkDisableGUIIcons() {
         if( MyDebug.LOG )
             Log.d(TAG, "checkDisableGUIIcons");
+        boolean changed = false;
         if( !mainUI.showExposureLockIcon() ) {
             View button = findViewById(R.id.exposure_lock);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showWhiteBalanceLockIcon() ) {
             View button = findViewById(R.id.white_balance_lock);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showCycleRawIcon() ) {
             View button = findViewById(R.id.cycle_raw);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showStoreLocationIcon() ) {
             View button = findViewById(R.id.store_location);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showTextStampIcon() ) {
             View button = findViewById(R.id.text_stamp);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showStampIcon() ) {
             View button = findViewById(R.id.stamp);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showAutoLevelIcon() ) {
             View button = findViewById(R.id.auto_level);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showCycleFlashIcon() ) {
             View button = findViewById(R.id.cycle_flash);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
         if( !mainUI.showFaceDetectionIcon() ) {
             View button = findViewById(R.id.face_detection);
+            changed = changed || (button.getVisibility() != View.GONE);
             button.setVisibility(View.GONE);
         }
+        if( !showSwitchMultiCamIcon() ) {
+            // also handle the multi-cam icon here, as this can change when switching between front/back cameras
+            // (e.g., if say a device only has multiple back cameras)
+            View button = findViewById(R.id.switch_multi_camera);
+            changed = changed || (button.getVisibility() != View.GONE);
+            button.setVisibility(View.GONE);
+        }
+        return changed;
     }
 
     public MyPreferenceFragment getPreferenceFragment() {
@@ -2095,7 +2762,7 @@ public class MainActivity extends Activity {
         preferencesListener.stopListening();
 
         // Update the cached settings in DrawPreview
-        // Note that some GUI related settings won't trigger preferencesListener.anyChanges(), so
+        // Note that some GUI related settings won't trigger preferencesListener.anyChange(), so
         // we always call this. Perhaps we could add more classifications to PreferencesListener
         // to mark settings that need us to update DrawPreview but not call updateForSettings().
         // However, DrawPreview.updateSettings() should be a quick function (the main point is
@@ -2103,12 +2770,12 @@ public class MainActivity extends Activity {
         applicationInterface.getDrawPreview().updateSettings();
 
         if( preferencesListener.anyChange() ) {
-            // in case face detection etc enabled/disabled in settings:
             mainUI.updateOnScreenIcons();
         }
 
         if( preferencesListener.anySignificantChange() ) {
-            updateForSettings();
+            // don't need to update camera, as we now pause/resume camera when going to settings
+            updateForSettings(false);
         }
         else {
             if( MyDebug.LOG )
@@ -2152,7 +2819,7 @@ public class MainActivity extends Activity {
         if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT ) {
             SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
             String immersive_mode = sharedPreferences.getString(PreferenceKeys.ImmersiveModePreferenceKey, "immersive_mode_low_profile");
-            if( immersive_mode.equals("immersive_mode_gui") || immersive_mode.equals("immersive_mode_everything") )
+            if( immersive_mode.equals("immersive_mode_navigation") || immersive_mode.equals("immersive_mode_gui") || immersive_mode.equals("immersive_mode_everything") )
                 return true;
         }
         return false;
@@ -2235,7 +2902,7 @@ public class MainActivity extends Activity {
         // done here rather than onCreate, so that changing it in preferences takes effect without restarting app
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
         final WindowManager.LayoutParams layout = getWindow().getAttributes();
-        if( force_max || sharedPreferences.getBoolean(PreferenceKeys.getMaxBrightnessPreferenceKey(), true) ) {
+        if( force_max || sharedPreferences.getBoolean(PreferenceKeys.MaxBrightnessPreferenceKey, true) ) {
             layout.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL;
         }
         else {
@@ -2298,6 +2965,7 @@ public class MainActivity extends Activity {
         if( preview != null ) {
             // also need to call setCameraDisplayOrientation, as this handles if the user switched from portrait to reverse landscape whilst in settings/etc
             // as switching from reverse landscape back to landscape isn't detected in onConfigurationChanged
+            // update: now probably irrelevant now that we close/reopen the camera, but keep it here anyway
             preview.setCameraDisplayOrientation();
         }
         if( preview != null && mainUI != null ) {
@@ -2314,7 +2982,7 @@ public class MainActivity extends Activity {
 
 
         // keep screen active - see http://stackoverflow.com/questions/2131948/force-screen-on
-        if( sharedPreferences.getBoolean(PreferenceKeys.getKeepDisplayOnPreferenceKey(), true) ) {
+        if( sharedPreferences.getBoolean(PreferenceKeys.KeepDisplayOnPreferenceKey, true) ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "do keep screen on");
             this.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -2324,7 +2992,7 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "don't keep screen on");
             this.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
-        if( sharedPreferences.getBoolean(PreferenceKeys.getShowWhenLockedPreferenceKey(), true) ) {
+        if( sharedPreferences.getBoolean(PreferenceKeys.ShowWhenLockedPreferenceKey, true) ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "do show when locked");
             // keep Open Camera on top of screen-lock (will still need to unlock when going to gallery or settings)
@@ -2336,12 +3004,31 @@ public class MainActivity extends Activity {
             showWhenLocked(false);
         }
 
+        if( want_no_limits && navigation_gap != 0 ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "set FLAG_LAYOUT_NO_LIMITS");
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        }
+
         setBrightnessForCamera(false);
 
         initImmersiveMode();
         camera_in_background = false;
 
         magneticSensor.clearDialog(); // if the magnetic accuracy was opened, it must have been closed now
+        if( !app_is_paused ) {
+            // Needs to be called after camera_in_background is set to false.
+            // Note that the app_is_paused guard is in some sense unnecessary, as initLocation tests for that too,
+            // but useful for error tracking - ideally we want to make sure that initLocation is never called when
+            // app is paused. It can happen here because setWindowFlagsForCamera() is called from
+            // onCreate()
+            initLocation();
+
+            // Similarly only want to reopen the camera if no longer paused
+            if( preview != null ) {
+                preview.onResume();
+            }
+        }
     }
 
     private void setWindowFlagsForSettings() {
@@ -2364,6 +3051,11 @@ public class MainActivity extends Activity {
 
         // revert to standard screen blank behaviour
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if( want_no_limits && navigation_gap != 0 ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "clear FLAG_LAYOUT_NO_LIMITS");
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        }
         if( set_lock_protect ) {
             // settings should still be protected by screen lock
             showWhenLocked(false);
@@ -2377,6 +3069,12 @@ public class MainActivity extends Activity {
 
         setImmersiveMode(false);
         camera_in_background = true;
+
+        // we disable location listening when showing settings or a dialog etc - saves battery life, also better for privacy
+        applicationInterface.getLocationSupplier().freeLocationListeners();
+
+        // similarly we close the camera
+        preview.onPause(false);
     }
 
     private void showWhenLocked(boolean show) {
@@ -2424,6 +3122,145 @@ public class MainActivity extends Activity {
             Log.d(TAG, "showPreview: " + show);
         final ViewGroup container = findViewById(R.id.hide_container);
         container.setVisibility(show ? View.GONE : View.VISIBLE);
+    }
+
+    /** Rotates the supplied bitmap according to the orientation tag stored in the exif data. If no
+     *  rotation is required, the input bitmap is returned. If rotation is required, the input
+     *  bitmap is recycled.
+     * @param uri Uri containing the JPEG with Exif information to use.
+     */
+    public Bitmap rotateForExif(Bitmap bitmap, Uri uri) throws IOException {
+        ExifInterface exif;
+        InputStream inputStream = null;
+        try {
+            inputStream = this.getContentResolver().openInputStream(uri);
+            exif = new ExifInterface(inputStream);
+        }
+        finally {
+            if( inputStream != null )
+                inputStream.close();
+        }
+
+        if( exif != null ) {
+            int exif_orientation_s = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+            boolean needs_tf = false;
+            int exif_orientation = 0;
+            // see http://jpegclub.org/exif_orientation.html
+            // and http://stackoverflow.com/questions/20478765/how-to-get-the-correct-orientation-of-the-image-selected-from-the-default-image
+            if( exif_orientation_s == ExifInterface.ORIENTATION_UNDEFINED || exif_orientation_s == ExifInterface.ORIENTATION_NORMAL ) {
+                // leave unchanged
+            }
+            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_180 ) {
+                needs_tf = true;
+                exif_orientation = 180;
+            }
+            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_90 ) {
+                needs_tf = true;
+                exif_orientation = 90;
+            }
+            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_270 ) {
+                needs_tf = true;
+                exif_orientation = 270;
+            }
+            else {
+                // just leave unchanged for now
+                if( MyDebug.LOG )
+                    Log.e(TAG, "    unsupported exif orientation: " + exif_orientation_s);
+            }
+            if( MyDebug.LOG )
+                Log.d(TAG, "    exif orientation: " + exif_orientation);
+
+            if( needs_tf ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "    need to rotate bitmap due to exif orientation tag");
+                Matrix m = new Matrix();
+                m.setRotate(exif_orientation, bitmap.getWidth() * 0.5f, bitmap.getHeight() * 0.5f);
+                Bitmap rotated_bitmap = Bitmap.createBitmap(bitmap, 0, 0,bitmap.getWidth(), bitmap.getHeight(), m, true);
+                if( rotated_bitmap != bitmap ) {
+                    bitmap.recycle();
+                    bitmap = rotated_bitmap;
+                }
+            }
+        }
+        return bitmap;
+    }
+
+    /** Loads a thumbnail from the supplied image uri (not videos). Note this loads from the bitmap
+     *  rather than reading from MediaStore. Therefore this works with SAF uris as well as
+     *  MediaStore uris, as well as allowing control over the resolution of the thumbnail.
+     *  If sample_factor is 1, this returns a bitmap scaled to match the display resolution. If
+     *  sample_factor is greater than 1, it will be scaled down to a lower resolution.
+     * @param mediastore Whether the uri is for a mediastore uri or not.
+     */
+    private Bitmap loadThumbnailFromUri(Uri uri, int sample_factor, boolean mediastore) {
+        Bitmap thumbnail = null;
+        try {
+            //thumbnail = MediaStore.Images.Media.getBitmap(getContentResolver(), media.uri);
+            // only need to load a bitmap as large as the screen size
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            InputStream is = getContentResolver().openInputStream(uri);
+            // get dimensions
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(is, null, options);
+            int bitmap_width = options.outWidth;
+            int bitmap_height = options.outHeight;
+            Point display_size = new Point();
+            Display display = getWindowManager().getDefaultDisplay();
+            display.getSize(display_size);
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "bitmap_width: " + bitmap_width);
+                Log.d(TAG, "bitmap_height: " + bitmap_height);
+                Log.d(TAG, "display width: " + display_size.x);
+                Log.d(TAG, "display height: " + display_size.y);
+            }
+            // align dimensions
+            if( display_size.x < display_size.y ) {
+                //noinspection SuspiciousNameCombination
+                display_size.set(display_size.y, display_size.x);
+            }
+            if( bitmap_width < bitmap_height ) {
+                int dummy = bitmap_width;
+                //noinspection SuspiciousNameCombination
+                bitmap_width = bitmap_height;
+                bitmap_height = dummy;
+            }
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "bitmap_width: " + bitmap_width);
+                Log.d(TAG, "bitmap_height: " + bitmap_height);
+                Log.d(TAG, "display width: " + display_size.x);
+                Log.d(TAG, "display height: " + display_size.y);
+            }
+            // only care about height, to save worrying about different aspect ratios
+            options.inSampleSize = 1;
+            while( bitmap_height / (2*options.inSampleSize) >= display_size.y ) {
+                options.inSampleSize *= 2;
+            }
+            options.inSampleSize *= sample_factor;
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "inSampleSize: " + options.inSampleSize);
+            }
+            options.inJustDecodeBounds = false;
+            // need a new inputstream, see https://stackoverflow.com/questions/2503628/bitmapfactory-decodestream-returning-null-when-options-are-set
+            is.close();
+            is = getContentResolver().openInputStream(uri);
+            thumbnail = BitmapFactory.decodeStream(is, null, options);
+            if( thumbnail == null ) {
+                Log.e(TAG, "decodeStream returned null bitmap for ghost image last");
+            }
+            is.close();
+
+            if( !mediastore ) {
+                // When loading from a mediastore, the bitmap already seems to have the correct orientation.
+                // But when loading from a saf uri, we need to apply the rotation.
+                // E.g., test on Galaxy S10e with ghost image last image option, when using SAF, in portrait orientation, after pause/resume.
+                thumbnail = rotateForExif(thumbnail, uri);
+            }
+        }
+        catch(IOException e) {
+            Log.e(TAG, "failed to load bitmap for ghost image last");
+            e.printStackTrace();
+        }
+        return thumbnail;
     }
 
     /** Shows the default "blank" gallery icon, when we don't have a thumbnail available.
@@ -2485,73 +3322,58 @@ public class MainActivity extends Activity {
                     Log.d(TAG, "is_locked?: " + is_locked);
                 if( media != null && getContentResolver() != null && !is_locked ) {
                     // check for getContentResolver() != null, as have had reported Google Play crashes
+
+                    is_video = media.video;
+
                     if( ghost_image_last && !media.video ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "load full size bitmap for ghost image last photo");
-                        try {
-                            //thumbnail = MediaStore.Images.Media.getBitmap(getContentResolver(), media.uri);
-                            // only need to load a bitmap as large as the screen size
-                            BitmapFactory.Options options = new BitmapFactory.Options();
-                            InputStream is = getContentResolver().openInputStream(media.uri);
-                            // get dimensions
-                            options.inJustDecodeBounds = true;
-                            BitmapFactory.decodeStream(is, null, options);
-                            int bitmap_width = options.outWidth;
-                            int bitmap_height = options.outHeight;
-                            Point display_size = new Point();
-                            Display display = getWindowManager().getDefaultDisplay();
-                            display.getSize(display_size);
-                            if( MyDebug.LOG ) {
-                                Log.d(TAG, "bitmap_width: " + bitmap_width);
-                                Log.d(TAG, "bitmap_height: " + bitmap_height);
-                                Log.d(TAG, "display width: " + display_size.x);
-                                Log.d(TAG, "display height: " + display_size.y);
-                            }
-                            // align dimensions
-                            if( display_size.x < display_size.y ) {
-                                display_size.set(display_size.y, display_size.x);
-                            }
-                            if( bitmap_width < bitmap_height ) {
-                                int dummy = bitmap_width;
-                                bitmap_width = bitmap_height;
-                                bitmap_height = dummy;
-                            }
-                            if( MyDebug.LOG ) {
-                                Log.d(TAG, "bitmap_width: " + bitmap_width);
-                                Log.d(TAG, "bitmap_height: " + bitmap_height);
-                                Log.d(TAG, "display width: " + display_size.x);
-                                Log.d(TAG, "display height: " + display_size.y);
-                            }
-                            // only care about height, to save worrying about different aspect ratios
-                            options.inSampleSize = 1;
-                            while( bitmap_height / (2*options.inSampleSize) >= display_size.y ) {
-                                options.inSampleSize *= 2;
-                            }
-                            if( MyDebug.LOG ) {
-                                Log.d(TAG, "inSampleSize: " + options.inSampleSize);
-                            }
-                            options.inJustDecodeBounds = false;
-                            // need a new inputstream, see https://stackoverflow.com/questions/2503628/bitmapfactory-decodestream-returning-null-when-options-are-set
-                            is.close();
-                            is = getContentResolver().openInputStream(media.uri);
-                            thumbnail = BitmapFactory.decodeStream(is, null, options);
-                            if( thumbnail == null ) {
-                                Log.e(TAG, "decodeStream returned null bitmap for ghost image last");
-                            }
-                            is.close();
-                        }
-                        catch(IOException e) {
-                            Log.e(TAG, "failed to load bitmap for ghost image last");
-                            e.printStackTrace();
-                        }
+                        thumbnail = loadThumbnailFromUri(media.uri, 1, media.mediastore);
                     }
                     if( thumbnail == null ) {
                         try {
-                            if( media.video ) {
+                            if( !media.mediastore ) {
+                                if( media.video ) {
+                                    if( MyDebug.LOG )
+                                        Log.d(TAG, "load thumbnail for video from SAF uri");
+                                    ParcelFileDescriptor pfd_saf = null; // keep a reference to this as long as retriever, to avoid risk of pfd_saf being garbage collected
+                                    MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                                    try {
+                                        pfd_saf = getContentResolver().openFileDescriptor(media.uri, "r");
+                                        retriever.setDataSource(pfd_saf.getFileDescriptor());
+                                        thumbnail = retriever.getFrameAtTime(-1);
+                                    }
+                                    catch(Exception e) {
+                                        Log.d(TAG, "failed to load video thumbnail");
+                                        e.printStackTrace();
+                                    }
+                                    finally {
+                                        try {
+                                            retriever.release();
+                                        }
+                                        catch(RuntimeException ex) {
+                                            // ignore
+                                        }
+                                        try {
+                                            if( pfd_saf != null ) {
+                                                pfd_saf.close();
+                                            }
+                                        }
+                                        catch(IOException e) {
+                                            e.printStackTrace();
+                                        }
+                                    }
+                                }
+                                else {
+                                    if( MyDebug.LOG )
+                                        Log.d(TAG, "load thumbnail for photo from SAF uri");
+                                    thumbnail = loadThumbnailFromUri(media.uri, 4, media.mediastore);
+                                }
+                            }
+                            else if( media.video ) {
                                 if( MyDebug.LOG )
                                     Log.d(TAG, "load thumbnail for video");
                                 thumbnail = MediaStore.Video.Thumbnails.getThumbnail(getContentResolver(), media.id, MediaStore.Video.Thumbnails.MINI_KIND, null);
-                                is_video = true;
                             }
                             else {
                                 if( MyDebug.LOG )
@@ -2568,6 +3390,8 @@ public class MainActivity extends Activity {
                         }
                     }
                     if( thumbnail != null ) {
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "thumbnail orientation is " + media.orientation);
                         if( media.orientation != 0 ) {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "thumbnail size is " + thumbnail.getWidth() + " x " + thumbnail.getHeight());
@@ -2716,13 +3540,19 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "go to latest media");
             StorageUtils.Media media = applicationInterface.getStorageUtils().getLatestMedia();
             if( media != null ) {
-                uri = media.uri;
-                is_raw = media.path != null && media.path.toLowerCase(Locale.US).endsWith(".dng");
+                if( MyDebug.LOG )
+                    Log.d(TAG, "latest uri:" + media.uri);
+                uri = media.getMediaStoreUri(this);
+                if( MyDebug.LOG )
+                    Log.d(TAG, "media uri:" + uri);
+                is_raw = media.filename != null && media.filename.toLowerCase(Locale.US).endsWith(".dng");
             }
         }
 
-        if( uri != null ) {
+        if( uri != null && !MainActivity.useScopedStorage() ) {
             // check uri exists
+            // note, with scoped storage this isn't reliable when using SAF - since we don't actually have permission to access mediastore URIs that
+            // were created via Storage Access Framework, even though Open Camera was the application that saved them(!)
             if( MyDebug.LOG ) {
                 Log.d(TAG, "found most recent uri: " + uri);
                 Log.d(TAG, "is_raw: " + is_raw);
@@ -2888,16 +3718,16 @@ public class MainActivity extends Activity {
 
                         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
                         SharedPreferences.Editor editor = sharedPreferences.edit();
-                        editor.putString(PreferenceKeys.getSaveLocationSAFPreferenceKey(), treeUri.toString());
+                        editor.putString(PreferenceKeys.SaveLocationSAFPreferenceKey, treeUri.toString());
                         editor.apply();
 
                         if( MyDebug.LOG )
                             Log.d(TAG, "update folder history for saf");
                         updateFolderHistorySAF(treeUri.toString());
 
-                        File file = applicationInterface.getStorageUtils().getImageFolder();
+                        String file = applicationInterface.getStorageUtils().getImageFolderPath();
                         if( file != null ) {
-                            preview.showToast(null, getResources().getString(R.string.changed_save_location) + "\n" + file.getAbsolutePath());
+                            preview.showToast(null, getResources().getString(R.string.changed_save_location) + "\n" + file);
                         }
                     }
                     catch(SecurityException e) {
@@ -2906,12 +3736,12 @@ public class MainActivity extends Activity {
                         preview.showToast(null, R.string.saf_permission_failed);
                         // failed - if the user had yet to set a save location, make sure we switch SAF back off
                         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
-                        String uri = sharedPreferences.getString(PreferenceKeys.getSaveLocationSAFPreferenceKey(), "");
+                        String uri = sharedPreferences.getString(PreferenceKeys.SaveLocationSAFPreferenceKey, "");
                         if( uri.length() == 0 ) {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "no SAF save location was set");
                             SharedPreferences.Editor editor = sharedPreferences.edit();
-                            editor.putBoolean(PreferenceKeys.getUsingSAFPreferenceKey(), false);
+                            editor.putBoolean(PreferenceKeys.UsingSAFPreferenceKey, false);
                             editor.apply();
                         }
                     }
@@ -2921,12 +3751,12 @@ public class MainActivity extends Activity {
                         Log.d(TAG, "SAF dialog cancelled");
                     // cancelled - if the user had yet to set a save location, make sure we switch SAF back off
                     SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
-                    String uri = sharedPreferences.getString(PreferenceKeys.getSaveLocationSAFPreferenceKey(), "");
+                    String uri = sharedPreferences.getString(PreferenceKeys.SaveLocationSAFPreferenceKey, "");
                     if( uri.length() == 0 ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "no SAF save location was set");
                         SharedPreferences.Editor editor = sharedPreferences.edit();
-                        editor.putBoolean(PreferenceKeys.getUsingSAFPreferenceKey(), false);
+                        editor.putBoolean(PreferenceKeys.UsingSAFPreferenceKey, false);
                         editor.apply();
                         preview.showToast(null, R.string.saf_cancelled);
                     }
@@ -3029,6 +3859,8 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Update the save folder (for non-SAF methods).
+     */
     void updateSaveFolder(String new_save_location) {
         if( MyDebug.LOG )
             Log.d(TAG, "updateSaveFolder: " + new_save_location);
@@ -3040,11 +3872,12 @@ public class MainActivity extends Activity {
                 if( MyDebug.LOG )
                     Log.d(TAG, "changed save_folder to: " + this.applicationInterface.getStorageUtils().getSaveLocation());
                 SharedPreferences.Editor editor = sharedPreferences.edit();
-                editor.putString(PreferenceKeys.getSaveLocationPreferenceKey(), new_save_location);
+                editor.putString(PreferenceKeys.SaveLocationPreferenceKey, new_save_location);
                 editor.apply();
 
                 this.save_location_history.updateFolderHistory(this.getStorageUtils().getSaveLocation(), true);
-                this.preview.showToast(null, getResources().getString(R.string.changed_save_location) + "\n" + this.applicationInterface.getStorageUtils().getSaveLocation());
+                String save_folder_name = getHumanReadableSaveFolder(this.applicationInterface.getStorageUtils().getSaveLocation());
+                this.preview.showToast(null, getResources().getString(R.string.changed_save_location) + "\n" + save_folder_name);
             }
         }
     }
@@ -3073,6 +3906,79 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Processes a user specified save folder. This should be used with the non-SAF scoped storage
+     *  method, where the user types a folder directly.
+     */
+    public static String processUserSaveLocation(String folder) {
+        // filter repeated '/', e.g., replace // with /:
+        String strip = "//";
+        while( folder.length() >= 1 && folder.contains(strip) ) {
+            folder = folder.replaceAll(strip, "/");
+        }
+
+        if( folder.length() >= 1 && folder.charAt(0) == '/' ) {
+            // strip '/' as first character - as absolute paths not allowed with scoped storage
+            // whilst we do block entering a '/' as first character in the InputFilter, users could
+            // get around this (e.g., put a '/' as second character, then delete the first character)
+            folder = folder.substring(1);
+        }
+
+        if( folder.length() >= 1 && folder.charAt(folder.length()-1) == '/' ) {
+            // strip '/' as last character - MediaStore will ignore it, but seems cleaner to strip it out anyway
+            // (we still need to allow '/' as last character in the InputFilter, otherwise users won't be able to type it whilst writing a subfolder)
+            folder = folder.substring(0, folder.length()-1);
+        }
+
+        return folder;
+    }
+
+    /** Creates a dialog builder for specifying a save folder dialog (used when not using SAF,
+     *  and on scoped storage, as an alternative to using FolderChooserDialog).
+     */
+    public AlertDialog.Builder createSaveFolderDialog() {
+        final AlertDialog.Builder alertDialog = new AlertDialog.Builder(this);
+        alertDialog.setTitle(R.string.preference_save_location);
+
+        final EditText editText = new EditText(this);
+        editText.setInputType(InputType.TYPE_CLASS_TEXT);
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
+        editText.setText(sharedPreferences.getString(PreferenceKeys.SaveLocationPreferenceKey, "OpenCamera"));
+        InputFilter filter = new InputFilter() {
+            // whilst Android seems to allow any characters on internal memory, SD cards are typically formatted with FAT32
+            final String disallowed = "|\\?*<\":>";
+            public CharSequence filter(CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
+                for(int i=start;i<end;i++) {
+                    if( disallowed.indexOf( source.charAt(i) ) != -1 ) {
+                        return "";
+                    }
+                }
+                // also check for '/', not allowed at start
+                if( dstart == 0 && start < source.length() && source.charAt(start) == '/' ) {
+                    return "";
+                }
+                return null;
+            }
+        };
+        editText.setFilters(new InputFilter[]{filter});
+
+        alertDialog.setView(editText);
+        alertDialog.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialogInterface, int i) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "save location clicked okay");
+
+                String folder = editText.getText().toString();
+                folder = processUserSaveLocation(folder);
+
+                updateSaveFolder(folder);
+            }
+        });
+        alertDialog.setNegativeButton(android.R.string.cancel, null);
+
+        return alertDialog;
+    }
+
     /** Opens Open Camera's own (non-Storage Access Framework) dialog to select a folder.
      */
     private void openFolderChooserDialog() {
@@ -3081,14 +3987,51 @@ public class MainActivity extends Activity {
         showPreview(false);
         setWindowFlagsForSettings();
 
-        File start_folder = getStorageUtils().getImageFolder();
+        if( MainActivity.useScopedStorage() ) {
+            AlertDialog.Builder alertDialog = createSaveFolderDialog();
+            final AlertDialog alert = alertDialog.create();
+            // AlertDialog.Builder.setOnDismissListener() requires API level 17, so do it this way instead
+            alert.setOnDismissListener(new DialogInterface.OnDismissListener() {
+                @Override
+                public void onDismiss(DialogInterface arg0) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "save folder dialog dismissed");
+                    setWindowFlagsForCamera();
+                    showPreview(true);
+                }
+            });
+            alert.show();
+        }
+        else {
+            File start_folder = getStorageUtils().getImageFolder();
 
-        FolderChooserDialog fragment = new MyFolderChooserDialog();
-        fragment.setStartFolder(start_folder);
-        // use commitAllowingStateLoss() instead of fragment.show(), does to "java.lang.IllegalStateException: Can not perform this action after onSaveInstanceState" crash seen on Google Play
-        // see https://stackoverflow.com/questions/14262312/java-lang-illegalstateexception-can-not-perform-this-action-after-onsaveinstanc
-        //fragment.show(getFragmentManager(), "FOLDER_FRAGMENT");
-        getFragmentManager().beginTransaction().add(fragment, "FOLDER_FRAGMENT").commitAllowingStateLoss();
+            FolderChooserDialog fragment = new MyFolderChooserDialog();
+            fragment.setStartFolder(start_folder);
+            // use commitAllowingStateLoss() instead of fragment.show(), does to "java.lang.IllegalStateException: Can not perform this action after onSaveInstanceState" crash seen on Google Play
+            // see https://stackoverflow.com/questions/14262312/java-lang-illegalstateexception-can-not-perform-this-action-after-onsaveinstanc
+            //fragment.show(getFragmentManager(), "FOLDER_FRAGMENT");
+            getFragmentManager().beginTransaction().add(fragment, "FOLDER_FRAGMENT").commitAllowingStateLoss();
+        }
+    }
+
+    /** Returns a human readable string for the save_folder (as stored in the preferences).
+     */
+    private String getHumanReadableSaveFolder(String save_folder) {
+        if( applicationInterface.getStorageUtils().isUsingSAF() ) {
+            // try to get human readable form if possible
+            String file_name = applicationInterface.getStorageUtils().getFilePathFromDocumentUriSAF(Uri.parse(save_folder), true);
+            if( file_name != null ) {
+                save_folder = file_name;
+            }
+        }
+        else {
+            // The strings can either be a sub-folder of DCIM, or (pre-scoped-storage) a full path, so normally either can be displayed.
+            // But with scoped storage, an empty string is used to mean DCIM, so seems clearer to say that instead of displaying a blank line!
+            if( MainActivity.useScopedStorage() && save_folder.length() == 0 ) {
+                save_folder = "DCIM";
+            }
+        }
+        return save_folder;
     }
 
     /** User can long-click on gallery to select a recent save location from the history, of if not available,
@@ -3123,18 +4066,13 @@ public class MainActivity extends Activity {
         // history is stored in order most-recent-last
         for(int i=0;i<history.size();i++) {
             String folder_name = history.get(history.size() - 1 - i);
-            if( applicationInterface.getStorageUtils().isUsingSAF() ) {
-                // try to get human readable form if possible
-                File file = applicationInterface.getStorageUtils().getFileFromDocumentUriSAF(Uri.parse(folder_name), true);
-                if( file != null ) {
-                    folder_name = file.getAbsolutePath();
-                }
-            }
+            folder_name = getHumanReadableSaveFolder(folder_name);
             items[index++] = folder_name;
         }
         final int clear_index = index;
         items[index++] = getResources().getString(R.string.clear_folder_history);
         final int new_index = index;
+        //noinspection UnusedAssignment
         items[index++] = getResources().getString(R.string.choose_another_folder);
         alertDialog.setItems(items, new DialogInterface.OnClickListener() {
             @Override
@@ -3196,21 +4134,14 @@ public class MainActivity extends Activity {
                         String save_folder = history.get(history.size() - 1 - which);
                         if( MyDebug.LOG )
                             Log.d(TAG, "changed save_folder from history to: " + save_folder);
-                        String save_folder_name = save_folder;
-                        if( applicationInterface.getStorageUtils().isUsingSAF() ) {
-                            // try to get human readable form if possible
-                            File file = applicationInterface.getStorageUtils().getFileFromDocumentUriSAF(Uri.parse(save_folder), true);
-                            if( file != null ) {
-                                save_folder_name = file.getAbsolutePath();
-                            }
-                        }
+                        String save_folder_name = getHumanReadableSaveFolder(save_folder);
                         preview.showToast(null, getResources().getString(R.string.changed_save_location) + "\n" + save_folder_name);
                         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
                         SharedPreferences.Editor editor = sharedPreferences.edit();
                         if( applicationInterface.getStorageUtils().isUsingSAF() )
-                            editor.putString(PreferenceKeys.getSaveLocationSAFPreferenceKey(), save_folder);
+                            editor.putString(PreferenceKeys.SaveLocationSAFPreferenceKey, save_folder);
                         else
-                            editor.putString(PreferenceKeys.getSaveLocationPreferenceKey(), save_folder);
+                            editor.putString(PreferenceKeys.SaveLocationPreferenceKey, save_folder);
                         editor.apply();
                         history.updateFolderHistory(save_folder, true); // to move new selection to most recent
                     }
@@ -3398,7 +4329,7 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle state) {
+    protected void onSaveInstanceState(@NonNull Bundle state) {
         if( MyDebug.LOG )
             Log.d(TAG, "onSaveInstanceState");
         super.onSaveInstanceState(state);
@@ -3414,7 +4345,7 @@ public class MainActivity extends Activity {
         if( preview.getCameraController() == null )
             return false;
         if( preview.isVideoHighSpeed() ) {
-            // manuai ISO/exposure not supported for high speed video mode
+            // manual ISO/exposure not supported for high speed video mode
             // it's safer not to allow opening the panel at all (otherwise the user could open it, and switch to manual)
             return false;
         }
@@ -3430,6 +4361,58 @@ public class MainActivity extends Activity {
             Log.d(TAG, "cameraSetup");
             debug_time = System.currentTimeMillis();
         }
+
+        boolean old_want_no_limits = want_no_limits;
+        this.want_no_limits = false;
+        if( set_window_insets_listener ) {
+            Point display_size = new Point();
+            Display display = getWindowManager().getDefaultDisplay();
+            display.getSize(display_size);
+            int display_width = Math.max(display_size.x, display_size.y);
+            int display_height = Math.min(display_size.x, display_size.y);
+            double display_aspect_ratio = ((double)display_width)/(double)display_height;
+            double preview_aspect_ratio = preview.getCurrentPreviewAspectRatio();
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "display_aspect_ratio: " + display_aspect_ratio);
+                Log.d(TAG, "preview_aspect_ratio: " + preview_aspect_ratio);
+            }
+            boolean preview_is_wide = preview_aspect_ratio > display_aspect_ratio + 1.0e-5f;
+            if( test_preview_want_no_limits ) {
+                preview_is_wide = test_preview_want_no_limits_value;
+            }
+            if( preview_is_wide ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "preview is wide, set want_no_limits");
+                this.want_no_limits = true;
+
+                if( !old_want_no_limits ) {
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "need to change to FLAG_LAYOUT_NO_LIMITS");
+                    // Ideally we'd just go straight to FLAG_LAYOUT_NO_LIMITS mode, but then all calls to onApplyWindowInsets()
+                    // end up returning a value of 0 for the navigation_gap! So we need to wait until we know the navigation_gap.
+                    if( navigation_gap != 0 ) {
+                        // already have navigation gap, can go straight into no limits mode
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "set FLAG_LAYOUT_NO_LIMITS");
+                        getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+                        // need to layout the UI again due to now taking the navigation gap into account
+                        mainUI.layoutUI();
+                    }
+                    else {
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "but navigation_gap is 0");
+                    }
+                }
+            }
+            else if( old_want_no_limits && navigation_gap != 0 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "clear FLAG_LAYOUT_NO_LIMITS");
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+                // need to layout the UI again due to no longer taking the navigation gap into account
+                mainUI.layoutUI();
+            }
+        }
+
         if( this.supportsForceVideo4K() && preview.usingCamera2API() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "using Camera2 API, so can disable the force 4K option");
@@ -3508,12 +4491,12 @@ public class MainActivity extends Activity {
                     }
                 }
                 else {
-                    zoomSeekBar.setVisibility(View.INVISIBLE); // should be INVISIBLE not GONE, as the focus_seekbar is aligned to be left to this
+                    zoomSeekBar.setVisibility(View.INVISIBLE); // should be INVISIBLE not GONE, as the focus_seekbar is aligned to be left to this; in future we might want this similarly for exposure panel
                 }
             }
             else {
                 zoomControls.setVisibility(View.GONE);
-                zoomSeekBar.setVisibility(View.INVISIBLE); // should be INVISIBLE not GONE, as the focus_seekbar is aligned to be left to this
+                zoomSeekBar.setVisibility(View.INVISIBLE); // should be INVISIBLE not GONE, as the focus_seekbar is aligned to be left to this; in future we might want this similarly for the exposure panel
             }
             if( MyDebug.LOG )
                 Log.d(TAG, "cameraSetup: time after setting up zoom: " + (System.currentTimeMillis() - debug_time));
@@ -3659,6 +4642,14 @@ public class MainActivity extends Activity {
         View exposureButton = findViewById(R.id.exposure);
         exposureButton.setVisibility(supportsExposureButton() && !mainUI.inImmersiveMode() ? View.VISIBLE : View.GONE);
 
+        // needed as availability of some icons is per-camera (e.g., flash, RAW)
+        // for making icons visible, this is done elsewhere in call to MainUI.showGUI()
+        if( checkDisableGUIIcons() ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "cameraSetup: need to layoutUI as we hid some icons");
+            mainUI.layoutUI();
+        }
+
         // need to update some icons, e.g., white balance and exposure lock due to them being turned off when pause/resuming
         mainUI.updateOnScreenIcons();
 
@@ -3730,12 +4721,17 @@ public class MainActivity extends Activity {
         setManualFocusSeekBarVisibility(is_target_distance);
     }
 
-    void setManualFocusSeekBarVisibility(final boolean is_target_distance) {
-        SeekBar focusSeekBar = findViewById(is_target_distance ? R.id.focus_bracketing_target_seekbar : R.id.focus_seekbar);
+    public boolean showManualFocusSeekbar(final boolean is_target_distance) {
         boolean is_visible = preview.getCurrentFocusValue() != null && this.getPreview().getCurrentFocusValue().equals("focus_mode_manual2");
         if( is_target_distance ) {
             is_visible = is_visible && (applicationInterface.getPhotoMode() == MyApplicationInterface.PhotoMode.FocusBracketing) && !preview.isVideo();
         }
+        return is_visible;
+    }
+
+    void setManualFocusSeekBarVisibility(final boolean is_target_distance) {
+        boolean is_visible = showManualFocusSeekbar(is_target_distance);
+        SeekBar focusSeekBar = findViewById(is_target_distance ? R.id.focus_bracketing_target_seekbar : R.id.focus_seekbar);
         final int visibility = is_visible ? View.VISIBLE : View.GONE;
         focusSeekBar.setVisibility(visibility);
     }
@@ -3817,6 +4813,7 @@ public class MainActivity extends Activity {
             return false;
         // require 256MB just to be safe, due to the large number of images that may be created
         // also require at least Android 5, for Renderscript
+        // remember to update the FAQ "Why isn't Panorama supported on my device?" if this changes
         return( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && large_heap_memory >= 256 && applicationInterface.getGyroSensor().hasSensors() );
         //return false; // currently blocked for release
     }
@@ -3875,6 +4872,10 @@ public class MainActivity extends Activity {
         return this.camera_in_background;
     }
 
+    public boolean isAppPaused() {
+        return this.app_is_paused;
+    }
+
     public BluetoothRemoteControl getBluetoothRemoteControl() {
         return bluetoothRemoteControl;
     }
@@ -3921,6 +4922,44 @@ public class MainActivity extends Activity {
 
     public ToastBoxer getChangedAutoStabiliseToastBoxer() {
         return changed_auto_stabilise_toast;
+    }
+
+    private String getPhotoModeString(MyApplicationInterface.PhotoMode photo_mode, boolean string_for_std) {
+        String photo_mode_string = null;
+        switch( photo_mode ) {
+            case Standard:
+                if( string_for_std )
+                    photo_mode_string = getResources().getString(R.string.photo_mode_standard_full);
+                break;
+            case DRO:
+                photo_mode_string = getResources().getString(R.string.photo_mode_dro);
+                break;
+            case HDR:
+                photo_mode_string = getResources().getString(R.string.photo_mode_hdr);
+                break;
+            case ExpoBracketing:
+                photo_mode_string = getResources().getString(R.string.photo_mode_expo_bracketing_full);
+                break;
+            case FocusBracketing: {
+                photo_mode_string = getResources().getString(R.string.photo_mode_focus_bracketing_full);
+                int n_images = applicationInterface.getFocusBracketingNImagesPref();
+                photo_mode_string += " (" + n_images + ")";
+                break;
+            }
+            case FastBurst: {
+                photo_mode_string = getResources().getString(R.string.photo_mode_fast_burst_full);
+                int n_images = applicationInterface.getBurstNImages();
+                photo_mode_string += " (" + n_images + ")";
+                break;
+            }
+            case NoiseReduction:
+                photo_mode_string = getResources().getString(R.string.photo_mode_noise_reduction_full);
+                break;
+            case Panorama:
+                photo_mode_string = getResources().getString(R.string.photo_mode_panorama_full);
+                break;
+        }
+        return photo_mode_string;
     }
 
     /** Displays a toast with information about the current preferences.
@@ -3981,9 +5020,46 @@ public class MainActivity extends Activity {
                 simple = false;
             }
 
-            if( applicationInterface.useVideoLogProfile() && preview.supportsTonemapCurve() ) {
-                simple = false;
-                toast_string += "\n" + getResources().getString(R.string.video_log);
+            {
+                CameraController.TonemapProfile tonemap_profile = applicationInterface.getVideoTonemapProfile();
+                if( tonemap_profile != CameraController.TonemapProfile.TONEMAPPROFILE_OFF && preview.supportsTonemapCurve() ) {
+                    if( applicationInterface.getVideoTonemapProfile() != CameraController.TonemapProfile.TONEMAPPROFILE_OFF && preview.supportsTonemapCurve() ) {
+                        int string_id = 0;
+                        switch( tonemap_profile ) {
+                            case TONEMAPPROFILE_REC709:
+                                string_id = R.string.preference_video_rec709;
+                                break;
+                            case TONEMAPPROFILE_SRGB:
+                                string_id = R.string.preference_video_srgb;
+                                break;
+                            case TONEMAPPROFILE_LOG:
+                                string_id = R.string.video_log;
+                                break;
+                            case TONEMAPPROFILE_GAMMA:
+                                string_id = R.string.preference_video_gamma;
+                                break;
+                            case TONEMAPPROFILE_JTVIDEO:
+                                string_id = R.string.preference_video_jtvideo;
+                                break;
+                            case TONEMAPPROFILE_JTLOG:
+                                string_id = R.string.preference_video_jtlog;
+                                break;
+                            case TONEMAPPROFILE_JTLOG2:
+                                string_id = R.string.preference_video_jtlog2;
+                                break;
+                        }
+                        if( string_id != 0 ) {
+                            simple = false;
+                            toast_string += "\n" + getResources().getString(string_id);
+                            if( tonemap_profile == CameraController.TonemapProfile.TONEMAPPROFILE_GAMMA ) {
+                                toast_string += " " + applicationInterface.getVideoProfileGamma();
+                            }
+                        }
+                        else {
+                            Log.e(TAG, "unknown tonemap_profile: " + tonemap_profile);
+                        }
+                    }
+                }
             }
 
             boolean record_audio = applicationInterface.getRecordAudioPref();
@@ -3991,7 +5067,7 @@ public class MainActivity extends Activity {
                 toast_string += "\n" + getResources().getString(R.string.audio_disabled);
                 simple = false;
             }
-            String max_duration_value = sharedPreferences.getString(PreferenceKeys.getVideoMaxDurationPreferenceKey(), "0");
+            String max_duration_value = sharedPreferences.getString(PreferenceKeys.VideoMaxDurationPreferenceKey, "0");
             if( max_duration_value.length() > 0 && !max_duration_value.equals("0") ) {
                 String [] entries_array = getResources().getStringArray(R.array.preference_video_max_duration_entries);
                 String [] values_array = getResources().getStringArray(R.array.preference_video_max_duration_values);
@@ -4031,36 +5107,7 @@ public class MainActivity extends Activity {
                 toast_string += " " + current_size.width + "x" + current_size.height;
             }
 
-            String photo_mode_string = null;
-            switch( photo_mode ) {
-                case DRO:
-                    photo_mode_string = getResources().getString(R.string.photo_mode_dro);
-                    break;
-                case HDR:
-                    photo_mode_string = getResources().getString(R.string.photo_mode_hdr);
-                    break;
-                case ExpoBracketing:
-                    photo_mode_string = getResources().getString(R.string.photo_mode_expo_bracketing_full);
-                    break;
-                case FocusBracketing: {
-                    photo_mode_string = getResources().getString(R.string.photo_mode_focus_bracketing_full);
-                    int n_images = applicationInterface.getFocusBracketingNImagesPref();
-                    photo_mode_string += " (" + n_images + ")";
-                    break;
-                }
-                case FastBurst: {
-                    photo_mode_string = getResources().getString(R.string.photo_mode_fast_burst_full);
-                    int n_images = applicationInterface.getBurstNImages();
-                    photo_mode_string += " (" + n_images + ")";
-                    break;
-                }
-                case NoiseReduction:
-                    photo_mode_string = getResources().getString(R.string.photo_mode_noise_reduction_full);
-                    break;
-                case Panorama:
-                    photo_mode_string = getResources().getString(R.string.photo_mode_panorama_full);
-                    break;
-            }
+            String photo_mode_string = getPhotoModeString(photo_mode, false);
             if( photo_mode_string != null ) {
                 toast_string += (toast_string.length()==0 ? "" : "\n") + getResources().getString(R.string.photo_mode) + ": " + photo_mode_string;
                 simple = false;
@@ -4140,7 +5187,7 @@ public class MainActivity extends Activity {
                 simple = false;
             }
         }
-        String timer = sharedPreferences.getString(PreferenceKeys.getTimerPreferenceKey(), "0");
+        String timer = sharedPreferences.getString(PreferenceKeys.TimerPreferenceKey, "0");
         if( !timer.equals("0") && photo_mode != MyApplicationInterface.PhotoMode.Panorama ) {
             String [] entries_array = getResources().getStringArray(R.array.preference_timer_entries);
             String [] values_array = getResources().getStringArray(R.array.preference_timer_values);
@@ -4169,9 +5216,19 @@ public class MainActivity extends Activity {
         if( MyDebug.LOG ) {
             Log.d(TAG, "toast_string: " + toast_string);
             Log.d(TAG, "simple?: " + simple);
+            Log.d(TAG, "push_info_toast_text: " + push_info_toast_text);
         }
-        if( !simple || always_show )
-            preview.showToast(switch_video_toast, toast_string);
+        final boolean use_fake_toast = true;
+        if( !simple || always_show ) {
+            if( push_info_toast_text != null ) {
+                toast_string = push_info_toast_text + "\n" + toast_string;
+            }
+            preview.showToast(switch_video_toast, toast_string, use_fake_toast);
+        }
+        else if( push_info_toast_text != null ) {
+            preview.showToast(switch_video_toast, push_info_toast_text, use_fake_toast);
+        }
+        push_info_toast_text = null; // reset
     }
 
     private void freeAudioListener(boolean wait_until_done) {
@@ -4267,10 +5324,19 @@ public class MainActivity extends Activity {
         }
     }
 
-    void initLocation() {
+    public void initLocation() {
         if( MyDebug.LOG )
             Log.d(TAG, "initLocation");
-        if( !applicationInterface.getLocationSupplier().setupLocationListener() ) {
+        if( app_is_paused ) {
+            Log.e(TAG, "initLocation: app is paused!");
+            // we shouldn't need this (as we only call initLocation() when active), but just in case we end up here after onPause...
+        }
+        else if( camera_in_background ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "initLocation: camera in background!");
+            // we will end up here if app is pause/resumed when camera in background (settings, dialog, etc)
+        }
+        else if( !applicationInterface.getLocationSupplier().setupLocationListener() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "location permission not available, so request permission");
             permissionHandler.requestLocationPermission();

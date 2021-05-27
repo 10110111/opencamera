@@ -168,7 +168,7 @@
                 android:defaultValue="none"
                 />
 
-            <ListPreference 
+            <net.sourceforge.opencamera.ui.ArraySeekBarPreference
                 android:key="preference_audio_noise_control_sensitivity"
                 android:title="@string/preference_audio_noise_control_sensitivity"
                 android:summary="@string/preference_audio_noise_control_sensitivity_summary"
@@ -198,12 +198,20 @@
                     android:entries="@array/preference_remote_type_entries"
                     android:entryValues="@array/preference_remote_type_values"
                     android:defaultValue="preference_remote_type_kraken"
+                    android:dependency="preference_enable_remote"
                     />
 
                 <PreferenceScreen
                     android:key="preference_remote_device_name"
-                    android:title="Select remote device" >
-                    <intent android:action="net.sourceforge.opencamera.Remotecontrol.DeviceScanner"/>
+                    android:title="@string/preference_select_remote"
+                    android:dependency="preference_enable_remote"
+                    >
+
+                    <intent
+                        android:targetPackage="net.sourceforge.opencamera"
+                        android:targetClass="net.sourceforge.opencamera.remotecontrol.DeviceScanner"
+                        />
+
                 </PreferenceScreen>
 
                 <SwitchPreference
@@ -211,6 +219,7 @@
                     android:title="@string/preference_remote_disconnect_screen_dim"
                     android:summary="@string/preference_remote_disconnect_screen_dim_summary"
                     android:defaultValue="false"
+                    android:dependency="preference_enable_remote"
                     />
 
                 <SwitchPreference
@@ -218,6 +227,7 @@
                     android:title="@string/preference_water_type"
                     android:summary="@string/preference_water_type_summary"
                     android:defaultValue="true"
+                    android:dependency="preference_enable_remote"
                     />
 
             </PreferenceScreen>
@@ -295,6 +305,13 @@
                 android:defaultValue="true"
                 />
 
+            <SwitchPreference
+                android:key="preference_allow_long_press"
+                android:title="@string/preference_allow_long_press"
+                android:summary="@string/preference_allow_long_press_summary"
+                android:defaultValue="true"
+                />
+
             <Preference
                 android:key="preference_calibrate_level"
                 android:title="@string/preference_calibrate_level"
@@ -325,6 +342,13 @@
                 android:entries="@array/preference_ghost_image_entries"
                 android:entryValues="@array/preference_ghost_image_values"
                 android:defaultValue="preference_ghost_image_off"
+                />
+
+            <net.sourceforge.opencamera.ui.ArraySeekBarPreference
+                android:key="ghost_image_alpha"
+                android:title="@string/preference_ghost_image_alpha"
+                android:summary="@string/preference_ghost_image_alpha_summary"
+                android:defaultValue="50"
                 />
 
             <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
@@ -402,6 +426,14 @@
                 android:defaultValue="true"
                 />
 
+            <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
+            <CheckBoxPreference
+                android:key="preference_show_camera_id"
+                android:title="@string/preference_show_camera_id"
+                android:summary="@string/preference_show_camera_id_summary"
+                android:defaultValue="true"
+                />
+
             <CheckBoxPreference
                 android:key="preference_free_memory"
                 android:title="@string/preference_free_memory"
@@ -435,6 +467,26 @@
                 android:entries="@array/preference_zebra_stripes_entries"
                 android:entryValues="@array/preference_zebra_stripes_values"
                 android:defaultValue="0"
+                />
+
+            <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
+            <ListPreference
+                android:key="preference_zebra_stripes_foreground_color"
+                android:title="@string/preference_zebra_stripes_foreground_color"
+                android:summary="@string/preference_zebra_stripes_foreground_color_summary"
+                android:entries="@array/preference_zebra_stripes_foreground_color_entries"
+                android:entryValues="@array/preference_zebra_stripes_foreground_color_values"
+                android:defaultValue="#ff000000"
+                />
+
+            <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
+            <ListPreference
+                android:key="preference_zebra_stripes_background_color"
+                android:title="@string/preference_zebra_stripes_background_color"
+                android:summary="@string/preference_zebra_stripes_background_color_summary"
+                android:entries="@array/preference_zebra_stripes_background_color_entries"
+                android:entryValues="@array/preference_zebra_stripes_background_color_values"
+                android:defaultValue="#ffffffff"
                 />
 
             <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
@@ -646,6 +698,14 @@
                 android:defaultValue="true"
                 />
 
+            <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
+            <SwitchPreference
+                android:key="preference_multi_cam_button"
+                android:title="@string/preference_multi_cam_button"
+                android:summary="@string/preference_multi_cam_button_summary"
+                android:defaultValue="true"
+                />
+
             <SwitchPreference
                 android:key="preference_keep_display_on"
                 android:title="@string/preference_keep_display_on"
@@ -681,8 +741,8 @@
                 android:summary="%s"
                 android:icon="@drawable/ic_photo_size_select_large_white_48dp"
                 />
-        
-            <ListPreference 
+
+            <net.sourceforge.opencamera.ui.ArraySeekBarPreference
                 android:key="preference_quality"
                 android:title="@string/preference_quality"
                 android:summary="@string/preference_quality_summary"
@@ -808,6 +868,7 @@
                 android:title="@string/preference_category_exif_tags"
                 >
 
+                <!--suppress AndroidDomInspection --> <!-- stop lint complaining about empty defaultValue -->
                 <EditTextPreference
                     android:key="preference_exif_artist"
                     android:title="@string/preference_exif_artist"
@@ -818,6 +879,7 @@
                     android:defaultValue=""
                     />
 
+                <!--suppress AndroidDomInspection --> <!-- stop lint complaining about empty defaultValue -->
                 <EditTextPreference
                     android:key="preference_exif_copyright"
                     android:title="@string/preference_exif_copyright"
@@ -890,6 +952,7 @@
                     android:defaultValue="preference_units_distance_m"
                     />
 
+                <!--suppress AndroidDomInspection --> <!-- stop lint complaining about empty defaultValue -->
                 <EditTextPreference
                     android:key="preference_textstamp"
                     android:title="@string/preference_textstamp"
@@ -899,8 +962,8 @@
                     android:inputType="text"
                     android:defaultValue=""
                     />
-    
-                <ListPreference 
+
+                <net.sourceforge.opencamera.ui.ArraySeekBarPreference
                     android:key="preference_stamp_fontsize"
                     android:title="@string/preference_stamp_fontsize"
                     android:summary="@string/preference_stamp_fontsize_summary"
@@ -1002,22 +1065,6 @@
                 android:defaultValue="preference_video_output_format_default"
                 />
 
-            <ListPreference
-                android:key="preference_video_bitrate"
-                android:title="@string/preference_video_bitrate"
-                android:summary="@string/preference_video_bitrate_summary"
-                android:entries="@array/preference_video_bitrate_entries"
-                android:entryValues="@array/preference_video_bitrate_values"
-                android:defaultValue="default"
-                />
-
-            <ListPreference 
-                android:key="preference_video_fps"
-                android:title="@string/preference_video_fps"
-                android:summary="@string/preference_video_fps_summary"
-                android:defaultValue="default"
-                />
-
             <!--  if we move this to another PreferenceGroup, we should update code for the findPreference() call -->
             <ListPreference
                 android:key="preference_video_log"
@@ -1026,6 +1073,16 @@
                 android:entries="@array/preference_video_log_entries"
                 android:entryValues="@array/preference_video_log_values"
                 android:defaultValue="off"
+                />
+
+            <!--  if we move this to another PreferenceGroup, we should update code for the findPreference() call -->
+            <net.sourceforge.opencamera.ui.ArraySeekBarPreference
+                android:key="preference_video_profile_gamma"
+                android:title="@string/preference_video_profile_gamma"
+                android:summary="@string/preference_video_profile_gamma_summary"
+                android:entries="@array/preference_video_profile_gamma_entries"
+                android:entryValues="@array/preference_video_profile_gamma_values"
+                android:defaultValue="2.2"
                 />
 
             <ListPreference
@@ -1076,6 +1133,7 @@
                 android:entries="@array/preference_record_audio_src_entries"
                 android:entryValues="@array/preference_record_audio_src_values"
                 android:defaultValue="audio_src_camcorder"
+                android:dependency="preference_record_audio"
                 />
 
             <ListPreference 
@@ -1085,6 +1143,7 @@
                 android:entries="@array/preference_record_audio_channels_entries"
                 android:entryValues="@array/preference_record_audio_channels_values"
                 android:defaultValue="audio_default"
+                android:dependency="preference_record_audio"
                 />
 
             <SwitchPreference
@@ -1107,6 +1166,22 @@
                 android:key="preference_category_video_debugging"
                 android:title="@string/preference_category_video_debugging"
                 >
+
+                <ListPreference
+                    android:key="preference_video_bitrate"
+                    android:title="@string/preference_video_bitrate"
+                    android:summary="@string/preference_video_bitrate_summary"
+                    android:entries="@array/preference_video_bitrate_entries"
+                    android:entryValues="@array/preference_video_bitrate_values"
+                    android:defaultValue="default"
+                    />
+
+                <ListPreference
+                    android:key="preference_video_fps"
+                    android:title="@string/preference_video_fps"
+                    android:summary="@string/preference_video_fps_summary"
+                    android:defaultValue="default"
+                    />
 
                 <!--  if we move this to another PreferenceGroup, we should update code for the findPreference() call -->
                 <SwitchPreference
@@ -1154,12 +1229,21 @@
                 android:summary="@string/preference_gps_direction_summary"
                 android:defaultValue="false"
                 />
-            
+
+            <!--  if we move this to another PreferenceGroup, we should update code to remove this Preference -->
+            <CheckBoxPreference
+                android:key="preference_comment_ypr"
+                android:title="@string/preference_comment_ypr"
+                android:summary="@string/preference_comment_ypr_summary"
+                android:defaultValue="false"
+                />
+
             <CheckBoxPreference
                 android:key="preference_require_location"
                 android:title="@string/preference_require_location"
                 android:summary="@string/preference_require_location_summary"
                 android:defaultValue="false"
+                android:dependency="preference_location"
                 />
 
         </PreferenceScreen>
@@ -1241,6 +1325,12 @@
                 android:key="preference_licence_open_camera"
                 android:title="@string/preference_licence_open_camera"
                 android:summary="@string/preference_licence_open_camera_text"
+                />
+
+            <Preference
+                android:key="preference_licence_androidx"
+                android:title="@string/preference_licence_androidx"
+                android:summary="@string/preference_licence_androidx_text"
                 />
 
             <Preference

@@ -9,9 +9,12 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.location.Location;
 import android.net.Uri;
+import android.util.Log;
 import android.util.Pair;
 import android.view.MotionEvent;
 
+import net.sourceforge.opencamera.MyDebug;
+import net.sourceforge.opencamera.cameracontroller.CameraController;
 import net.sourceforge.opencamera.cameracontroller.RawImage;
 
 /** Provides communication between the Preview and the rest of the application
@@ -28,18 +31,22 @@ public interface ApplicationInterface {
         public boolean auto_restart; // whether to automatically restart on hitting max filesize (this setting is still relevant for max_filesize==0, as typically there will still be a device max filesize)
     }
 
-    int VIDEOMETHOD_FILE = 0; // video will be saved to a file
-    int VIDEOMETHOD_SAF = 1; // video will be saved using Android 5's Storage Access Framework
-    int VIDEOMETHOD_URI = 2; // video will be written to the supplied Uri
+    enum VideoMethod {
+        FILE, // video will be saved to a file
+        SAF, // video will be saved using Android 5's Storage Access Framework
+        MEDIASTORE, // video will be saved to the supplied MediaStore Uri
+        URI // video will be written to the supplied Uri
+    }
 
     // methods that request information
     Context getContext(); // get the application context
     boolean useCamera2(); // should Android 5's Camera 2 API be used?
     Location getLocation(); // get current location - null if not available (or you don't care about geotagging)
-    int createOutputVideoMethod(); // return a VIDEOMETHOD_* value to specify how to create a video file
-    File createOutputVideoFile(String extension) throws IOException; // will be called if createOutputVideoUsingSAF() returns VIDEOMETHOD_FILE; extension is the recommended filename extension for the chosen video type
-    Uri createOutputVideoSAF(String extension) throws IOException; // will be called if createOutputVideoUsingSAF() returns VIDEOMETHOD_SAF; extension is the recommended filename extension for the chosen video type
-    Uri createOutputVideoUri(); // will be called if createOutputVideoUsingSAF() returns VIDEOMETHOD_URI
+    VideoMethod createOutputVideoMethod(); // return a VideoMethod value to specify how to create a video file
+    File createOutputVideoFile(String extension) throws IOException; // will be called if createOutputVideoUsingSAF() returns VideoMethod.FILE; extension is the recommended filename extension for the chosen video type
+    Uri createOutputVideoSAF(String extension) throws IOException; // will be called if createOutputVideoUsingSAF() returns VideoMethod.SAF; extension is the recommended filename extension for the chosen video type
+    Uri createOutputVideoMediaStore(String extension) throws IOException; // will be called if createOutputVideoUsingSAF() returns VideoMethod.MEDIASTORE; extension is the recommended filename extension for the chosen video type
+    Uri createOutputVideoUri(); // will be called if createOutputVideoUsingSAF() returns VideoMethod.URI
     // for all of the get*Pref() methods, you can use Preview methods to get the supported values (e.g., getSupportedSceneModes())
     // if you just want a default or don't really care, see the comments for each method for a default or possible options
     // if Preview doesn't support the requested setting, it will check this, and choose its own
@@ -56,7 +63,46 @@ public interface ApplicationInterface {
     String getCameraNoiseReductionModePref(); // CameraController.NOISE_REDUCTION_MODE_DEFAULT for device default, or "off", "minimal", "fast", "high_quality"
     String getISOPref(); // "auto" for auto-ISO, otherwise a numerical value; see documentation for Preview.supportsISORange().
     int getExposureCompensationPref(); // 0 for default
-    Pair<Integer, Integer> getCameraResolutionPref(); // return null to let Preview choose size
+
+    class CameraResolutionConstraints {
+        private static final String TAG = "CameraResConstraints";
+
+        public boolean has_max_mp;
+        public int max_mp;
+
+        boolean hasConstraints() {
+            return has_max_mp;
+        }
+
+        boolean satisfies(CameraController.Size size) {
+            if( this.has_max_mp && size.width * size.height > this.max_mp ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "size index larger than max_mp: " + this.max_mp);
+                return false;
+            }
+            return true;
+        }
+    }
+    /** The resolution to use for photo mode.
+     *  If the returned resolution is not supported by the device, or this method returns null, then
+     *  the preview will choose a size, and then call setCameraResolutionPref() with the chosen
+     *  size.
+     *  If the returned resolution is supported by the device, setCameraResolutionPref() will be
+     *  called with the returned resolution.
+     *  Note that even if the device supports the resolution in general, the Preview may choose a
+     *  different resolution in some circumstances:
+     *  * A burst mode as been requested, but the resolution does not support burst.
+     *  * A constraint has been set via constraints.
+     *  In such cases, the resolution actually in use should be found by calling
+     *  Preview.getCurrentPictureSize() rather than relying on the setCameraResolutionPref(). (The
+     *  logic behind this is that if a resolution is not supported by the device at all, it's good
+     *  practice to correct the preference stored in user settings; but this shouldn't be done if
+     *  the resolution is changed for something more temporary such as enabling burst mode.)
+     * @param constraints Optional constraints that may be set. If the returned resolution does not
+     *                    satisfy these constraints, then the preview will choose the closest
+     *                    resolution that does.
+     */
+    Pair<Integer, Integer> getCameraResolutionPref(CameraResolutionConstraints constraints); // return null to let Preview choose size
     int getImageQualityPref(); // jpeg quality for taking photos; "90" is a recommended default
     boolean getFaceDetectionPref(); // whether to use face detection mode
     String getVideoQualityPref(); // should be one of Preview.getSupportedVideoQuality() (use Preview.getCamcorderProfile() or Preview.getCamcorderProfileDescription() for details); or return "" to let Preview choose quality
@@ -66,8 +112,9 @@ public interface ApplicationInterface {
     String getVideoBitratePref(); // return "default" to let Preview choose
     String getVideoFPSPref(); // return "default" to let Preview choose; if getVideoCaptureRateFactor() returns a value other than 1.0, this is the capture fps; the resultant video's fps will be getVideoFPSPref()*getVideoCaptureRateFactor()
     float getVideoCaptureRateFactor(); // return 1.0f for standard operation, less than 1.0 for slow motion, more than 1.0 for timelapse; consider using a higher fps for slow motion, see getVideoFPSPref()
-    boolean useVideoLogProfile(); // whether to use a log profile for video mode
-    float getVideoLogProfileStrength(); // strength of the log profile for video mode, if useVideoLogProfile() returns true
+    CameraController.TonemapProfile getVideoTonemapProfile(); // tonemap profile to use for video mode
+    float getVideoLogProfileStrength(); // strength of the log profile for video mode, if getVideoTonemapProfile() returns TONEMAPPROFILE_LOG
+    float getVideoProfileGamma(); // gamma for video mode, if getVideoTonemapProfile() returns TONEMAPPROFILE_GAMMA
     long getVideoMaxDurationPref(); // time in ms after which to automatically stop video recording (return 0 for off)
     int getVideoRestartTimesPref(); // number of times to restart video recording after hitting max duration (return 0 for never auto-restarting)
     VideoMaxFileSize getVideoMaxFileSizePref() throws NoFreeStorageException; // see VideoMaxFileSize class for details
@@ -110,7 +157,8 @@ public interface ApplicationInterface {
         NRMODE_NORMAL,
         NRMODE_LOW_LIGHT
     }
-    NRModePref getNRModePref(); // only relevant if getBurstForNoiseReduction() returns true
+    NRModePref getNRModePref(); // only relevant if getBurstForNoiseReduction() returns true; if this changes without reopening the preview's camera, call Preview.setupBurstMode()
+    float getAperturePref(); // get desired aperture (called if Preview.getSupportedApertures() returns non-null); return -1.0f for no preference
     boolean getOptimiseAEForDROPref(); // see CameraController doc for setOptimiseAEForDRO().
     enum RawPref {
         RAWPREF_JPEG_ONLY, // JPEG only
@@ -121,7 +169,7 @@ public interface ApplicationInterface {
     boolean useCamera2FakeFlash(); // whether to enable CameraController.setUseCamera2FakeFlash() for Camera2 API
     boolean useCamera2FastBurst(); // whether to enable Camera2's captureBurst() for faster taking of expo-bracketing photos (generally should be true, but some devices have problems with captureBurst())
     boolean usePhotoVideoRecording(); // whether to enable support for taking photos when recording video (if not supported, this won't be called)
-    boolean isPreviewInBackground(); // if true, then Preview can disable real-time effects (e.g., computing histogram)
+    boolean isPreviewInBackground(); // if true, then Preview can disable real-time effects (e.g., computing histogram); also it won't try to open the camera when in the background
     boolean allowZoom(); // if false, don't allow zoom functionality even if the device supports it - Preview.supportsZoom() will also return false; if true, allow zoom if the device supports it
 
     // for testing purposes:
@@ -133,7 +181,9 @@ public interface ApplicationInterface {
     void startingVideo(); // called just before video recording starts
     void startedVideo(); // called just after video recording starts
     void stoppingVideo(); // called just before video recording stops; note that if startingVideo() is called but then video recording fails to start, this method will still be called, but startedVideo() and stoppedVideo() won't be called
-    void stoppedVideo(final int video_method, final Uri uri, final String filename); // called after video recording stopped (uri/filename will be null if video is corrupt or not created); will be called iff startedVideo() was called
+    void stoppedVideo(final VideoMethod video_method, final Uri uri, final String filename); // called after video recording stopped (uri/filename will be null if video is corrupt or not created); will be called iff startedVideo() was called
+    void restartedVideo(final VideoMethod video_method, final Uri uri, final String filename); // called after a seamless restart (supported on Android 8+) has occurred - in this case stoppedVideo() is only called for the final video file; this method is instead called for all earlier video file segments
+    void deleteUnusedVideo(final VideoMethod video_method, final Uri uri, final String filename); // application should delete the requested video (which will correspond to a video file previously returned via the createOutputVideo*() methods), either because it is corrupt or unused
     void onFailedStartPreview(); // called if failed to start camera preview
     void onCameraError(); // called if the camera closes due to serious error.
     void onPhotoError(); // callback for failing to take a photo
@@ -172,6 +222,7 @@ public interface ApplicationInterface {
     void setVideoQualityPref(String video_quality);
     void setZoomPref(int zoom);
     void requestCameraPermission(); // for Android 6+: called when trying to open camera, but CAMERA permission not available
+    @SuppressWarnings("SameReturnValue")
     boolean needsStoragePermission(); // return true if the preview should call requestStoragePermission() if WRITE_EXTERNAL_STORAGE not available (i.e., if the application needs storage permission, e.g., to save photos)
     void requestStoragePermission(); // for Android 6+: called when trying to open camera, but WRITE_EXTERNAL_STORAGE permission not available
     void requestRecordAudioPermission(); // for Android 6+: called when switching to (or starting up in) video mode, but RECORD_AUDIO permission not available

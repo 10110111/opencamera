@@ -103,13 +103,13 @@
     <string name="preference_pause_preview">Fotoğraf çektikten sonra beklet</string>
     <string name="preference_pause_preview_summary">Fotoğraf çektikten sonra fotoğrafı paylaşma ya da silme seçeneği için ekranı duraklat</string>
     <string name="preference_shutter_sound">Fotoğraf çekme sesi</string>
-    <string name="preference_shutter_sound_summary">Fotoğraf çekerken ses çal(kapatmak için Android 4.2 ya da daha üstü gereklidir)</string>
+    <string name="preference_shutter_sound_summary">Fotoğraf çekerken ses çal</string>
     <string name="preference_volume_keys">Ses seviyesi tuşları</string>
 
     <string name="preference_save_location">Kaydetme yeri</string>
     <string name="preference_save_location_summary">Fotoğraf/vidyo dosyaları için kayıt klasörü</string>
     <string name="preference_using_saf">Storage Access Framework kullan</string>
-    <string name="preference_using_saf_summary">Android 5\'s fotoğraf ve vidyoları kaydetmek için Storage Access Framework kullan</string>
+    <string name="preference_using_saf_summary">Fotoğraf ve vidyoları kaydetmek için Storage Access Framework kullan</string>
     <string name="preference_save_photo_prefix">Fotoğraf adlandırma öneki kaydet</string>
     <string name="preference_save_photo_prefix_summary">Fotoğraflarda dosya adlarını kaydetmede kullanılacak önek</string>
     <string name="preference_save_video_prefix">vidyo adlandırma öneki kaydet</string>
@@ -213,7 +213,7 @@
     <string name="preference_donate">Geliştirmeyi desteklemek için bağışta bulunun</string>
     <string name="preference_donate_summary">Uygulamayı beğendiyseniz, bağış yapmayı düşünebilirsiniz. "donation app" satın alarak bunu yapabilirsiniz - bu seçeneğe tıkladığınızda bağış uygulaması için sayfam açılacaktır. Teşekkürler!</string>
     <string name="preference_use_camera2">Camera2 API sini kullan</string>
-    <string name="preference_use_camera2_summary">Etkinleştirir Android 5\'s Camera2 API - ekstra özellikler sunar fakat şuan deneyseldir(yeniden başlatacaktır)</string>
+    <string name="preference_use_camera2_summary">Etkinleştirir Camera2 API - ekstra özellikler sunar fakat şuan deneyseldir(yeniden başlatacaktır)</string>
     <string name="preference_about">Hakkında</string>
     <string name="preference_about_summary">Uygulama ve eksiklik bilgisi</string>
     <string name="preference_reset">Ayarları temizle</string>
@@ -322,6 +322,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Sınırsız</string>
 
     <string name="preference_burst_interval_no_delay">Gecikmesiz</string>
@@ -360,4 +367,8 @@
     <string name="preference_stamp_style_shadowed">Gölgeli yazı</string>
     <string name="preference_stamp_style_plain">Düz yazı</string>
 
+    <string name="preference_immersive_mode_off">Kapalı</string>
+    <string name="preference_immersive_mode_navigation">Sadece sanal ekran navigasyon butonlarını gizle</string>
+    <string name="preference_immersive_mode_gui">GUI(Grafik arayüz) gizle</string>
+    <string name="preference_immersive_mode_everything">Herşeyi gizle</string>
 </resources>

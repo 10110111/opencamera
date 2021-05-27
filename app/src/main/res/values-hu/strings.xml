@@ -112,7 +112,7 @@
     <string name="preference_save_location">Mentés helye</string>
     <string name="preference_save_location_summary">Fotók, videofájlok mentésének könyvtára</string>
     <string name="preference_using_saf">Storage Access Framework használata</string>
-    <string name="preference_using_saf_summary">Használja-e az Android 5 Storage Access Frameworkjét a fotók és videók mentéséhez</string>
+    <string name="preference_using_saf_summary">Használja-e az Storage Access Frameworkjét a fotók és videók mentéséhez</string>
     <string name="preference_save_photo_prefix">Fotó fájlnév előtag</string>
     <string name="preference_save_photo_prefix_summary">A fényképek mentésekor használt fájlnév előtag</string>
     <string name="preference_save_video_prefix">Videó fájlnév előtag</string>
@@ -228,7 +228,7 @@
     <string name="preference_donate">Támogasd a fejlesztést adománnyal</string>
     <string name="preference_donate_summary">A tetszik az alkalmazás, fontold meg adomány küldését a fejlesztés támogatására. Ezt a „támogatói alkalmazás” megvásárlásával teheted meg – kattints ide, hogy megnyisd a támogató alkalmazás oldalát. Köszönjük!</string>
     <string name="preference_use_camera2">Camera2 API használata</string>
-    <string name="preference_use_camera2_summary">Lehetővé teszi az Android 5-ös Camera2 API használatát - extra funkciókat kínál, de nem minden eszközön működik megfelelően (újraindulást eredményez)</string>
+    <string name="preference_use_camera2_summary">Lehetővé teszi az Camera2 API használatát - extra funkciókat kínál, de nem minden eszközön működik megfelelően (újraindulást eredményez)</string>
     <string name="preference_about">Névjegy</string>
     <string name="preference_about_summary">App és hibakeresési információk</string>
     <string name="preference_reset">Beállítások visszaállítása</string>
@@ -280,7 +280,7 @@
     <string name="audio_listener_started">Csinálj hangos zajt</string>
 
     <string name="auto_stabilise_info">Az auto-stabilizálás automatikusan elforgatja a fotókat, hogy szintben legyenek.\n\nNe felejtsd el, hogy a képek így kicsit kisebb felbontásúak lesznek (a forgatás és vágás miatt).</string>
-    <string name="raw_info">A DNG fájlok a kamera teljes, tömörítetlen és feldolgozatlan adatait tartalmazzák.\n\nA legtöbb galéria alkalmazás nem ismeri a DNG formátumot, érdemes helyette specializált alkalmazást használni, mint például a Snapseed vagy a Lightroom.\n\nMegjegyzendő, hogy az utófeldolgozó beállítások, mint a „Fotók feliratozása” és „Auto-stabilizálás” csak a JPEG képekre kerülnek rá, a DNG-re nem.\n\nA DNG fájlok sokkal több helyet foglalnak; egy fájlkezelő alkalmazás hasznos lehet a másolásukhoz, törlésükhöz.\n\nDNG fájlok csak Normál és DRO fotómódban mentődnek.</string>
+    <string name="raw_info">A DNG fájlok a kamera teljes, tömörítetlen és feldolgozatlan adatait tartalmazzák.\n\nA legtöbb galéria alkalmazás nem ismeri a DNG formátumot, érdemes helyette specializált alkalmazást használni.\n\nMegjegyzendő, hogy az utófeldolgozó beállítások, mint a „Fotók feliratozása” és „Auto-stabilizálás” csak a JPEG képekre kerülnek rá, a DNG-re nem.\n\nA DNG fájlok sokkal több helyet foglalnak; egy fájlkezelő alkalmazás hasznos lehet a másolásukhoz, törlésükhöz.\n\nDNG fájlok csak Normál és DRO fotómódban mentődnek.</string>
     <string name="hdr_info">A HDR mód változó fényerejű felvételek készítésénél hasznos. Úgy működik, hogy több felvételt kész különböző expozíciós idővel, és ezeket összekombinálva hozza létre a végleges képet.\n\nMegjegyzendő, hogy a HDR nem alkalmas gyorsan mozgó tárgyak fotózására, mert kevésbé pontos színvisszaadást eredményez.\n\nA HDR fotók készítése lassabb.</string>
 
     <string name="dont_show_again">Ne jelenjen meg újra</string>
@@ -444,6 +444,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Korlátlan</string>
 
     <string name="preference_burst_interval_no_delay">Nincs késleltetés</string>
@@ -497,4 +504,8 @@
     <string name="preference_stamp_style_shadowed">Árnyékos szöveg</string>
     <string name="preference_stamp_style_plain">Sima szöveg</string>
 
+    <string name="preference_immersive_mode_off">Ki</string>
+    <string name="preference_immersive_mode_navigation">Csak a virtuális navigációs gombok elrejtése</string>
+    <string name="preference_immersive_mode_gui">Kezelőfelület elrejtése</string>
+    <string name="preference_immersive_mode_everything">Minden elrejtése</string>
 </resources>

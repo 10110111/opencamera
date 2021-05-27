@@ -112,7 +112,7 @@
     <string name="preference_save_location">Carpeta de almacenamiento</string>
     <string name="preference_save_location_summary">Carpeta para guardar los archivos de foto/video</string>
     <string name="preference_using_saf">Utilizar el Framework de Acceso del Almacenamiento</string>
-    <string name="preference_using_saf_summary">Utilice el Framework de Acceso del Almacenamiento de Android 5 para guardar fotos y videos</string>
+    <string name="preference_using_saf_summary">Utilice el Framework de Acceso del Almacenamiento para guardar fotos y videos</string>
     <string name="preference_save_photo_prefix">Prefijo de foto</string>
     <string name="preference_save_photo_prefix_summary">Prefijo utilizado para el nombre de las fotos</string>
     <string name="preference_save_video_prefix">Prefijo de video</string>
@@ -228,7 +228,7 @@
     <string name="preference_donate">Done para apoyar el proyecto</string>
     <string name="preference_donate_summary">Si te gusta esta aplicación, por favor considera hacer una donación para apoyar el proyecto. Puedes hacerlo comprando mi "aplicación de donación" - haz clic en esta opción para abrir la página de mi aplicación de donación. ¡Gracias!</string>
     <string name="preference_use_camera2">Utiliza Camera2 API</string>
-    <string name="preference_use_camera2_summary">Utiliza la Camara2 de Android 5 - ofrece funcionalidades extra, pero esta en fase experimental (causara un reseteo de la aplicación)</string>
+    <string name="preference_use_camera2_summary">Utiliza la Camara2 - ofrece funcionalidades extra, pero esta en fase experimental (causara un reseteo de la aplicación)</string>
     <string name="preference_about">Acerca de</string>
     <string name="preference_about_summary">Información de aplicación y depuración</string>
     <string name="preference_reset">Restablecer ajustes</string>
@@ -281,7 +281,7 @@
     <string name="audio_listener_started">Introducir un ruido fuerte</string>
 
     <string name="auto_stabilise_info">El nivel automático rotará ligeramente las fotos para que aparezcan niveladas.\n\nTenga en cuenta que las imágenes saldrán con una resolución ligeramente menor (debido a la rotación y al recorte que se requiere).</string>
-    <string name="raw_info">Los archivos DNG contienen la información completa sin comprimir y sin procesar de su cámara.\n\nLa mayoría de las aplicaciones de la galería no reconocerán DNG, sino que se deben usar con aplicaciones especializadas como Snapseed o Lightroom.\n\nTenga en cuenta que varias opciones de procesamiento, como el estampado de las fotos y el nivel automático, solo se aplicarán a las imágenes JPEG, y no a las imágenes DNG\n\nLos archivos DNG ocupan mucho espacio; una aplicación de explorador de archivos puede ser útil para transferirlos o eliminarlos.\n\nLos archivos DNG solo se guardan en los modos de fotografía estándar o DRO (D-Range Optimise).</string>
+    <string name="raw_info">Los archivos DNG contienen la información completa sin comprimir y sin procesar de su cámara.\n\nLa mayoría de las aplicaciones de la galería no reconocerán DNG, sino que se deben usar con aplicaciones especializadas.\n\nTenga en cuenta que varias opciones de procesamiento, como el estampado de las fotos y el nivel automático, solo se aplicarán a las imágenes JPEG, y no a las imágenes DNG\n\nLos archivos DNG ocupan mucho espacio; una aplicación de explorador de archivos puede ser útil para transferirlos o eliminarlos.\n\nLos archivos DNG solo se guardan en los modos de fotografía estándar o DRO (D-Range Optimise).</string>
     <string name="hdr_info">El modo HDR es útil para tomas con una gran variación de brillo. Funciona tomando múltiples tomas con diferentes exposiciones y combinándolas para crear la imagen final.\n\nTenga en cuenta que el HDR no es adecuado para escenas con movimiento rápido y puede dar como resultado una reproducción de color menos precisa.\n\nTomar fotos en modo HDR será más lento.</string>
 
     <string name="dont_show_again">No mostrar de nuevo</string>
@@ -292,7 +292,6 @@
     <string name="photo_mode_hdr">HDR</string>
     <string name="photo_mode_expo_bracketing">BKT {}</string>
     <string name="photo_mode_expo_bracketing_full">Horquillado de exposición</string>
-    <string name="photo_mode_fast_burst">[]]]</string>
     <string name="photo_mode_fast_burst_full">Ráfaga rápida</string>
     <string name="photo_mode_noise_reduction">NR</string>
     <string name="photo_mode_noise_reduction_full">Reducción de ruido</string>
@@ -539,6 +538,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Ilimitado</string>
 
     <string name="preference_burst_interval_no_delay">Sin retardo</string>
@@ -592,4 +598,8 @@
     <string name="preference_stamp_style_shadowed">Texto sombreado</string>
     <string name="preference_stamp_style_plain">Texto plano</string>
 
+    <string name="preference_immersive_mode_off">Apagado</string>
+    <string name="preference_immersive_mode_navigation">Sólo ocultar los botones de navegación en pantalla</string>
+    <string name="preference_immersive_mode_gui">Ocultar interfaz de usuario</string>
+    <string name="preference_immersive_mode_everything">Ocultar todo</string>
 </resources>

@@ -15,6 +15,8 @@ import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.TextureView;
 
+import androidx.annotation.NonNull;
+
 /** CameraController is an abstract class that wraps up the access/control to
  *  the Android camera, so that the rest of the application doesn't have to
  *  deal directly with the Android camera API. It also allows us to support
@@ -38,6 +40,7 @@ public abstract class CameraController {
     public static final String ISO_DEFAULT = "auto";
     public static final long EXPOSURE_TIME_DEFAULT = 1000000000L/30; // note, responsibility of callers to check that this is within the valid min/max range
 
+    public static final int ISO_FOR_DARK = 1100;
     public static final int N_IMAGES_NR_DARK = 8;
     public static final int N_IMAGES_NR_DARK_LOW_LIGHT = 15;
 
@@ -52,6 +55,8 @@ public abstract class CameraController {
     public volatile int test_fake_flash_photo; // for Camera2 API, records torch turning on for fake flash for photo capture
     public volatile int test_af_state_null_focus; // for Camera2 API, records af_state being null even when we've requested autofocus
     public volatile boolean test_used_tonemap_curve;
+    public volatile int test_texture_view_buffer_w; // for TextureView, keep track of buffer size
+    public volatile int test_texture_view_buffer_h;
 
     public static class CameraFeatures {
         public boolean is_zoom_supported;
@@ -64,10 +69,12 @@ public abstract class CameraController {
         public List<CameraController.Size> preview_sizes;
         public List<String> supported_flash_values;
         public List<String> supported_focus_values;
+        public float [] apertures; // may be null if not supported, else will have at least 2 values
         public int max_num_focus_areas;
         public float minimum_focus_distance;
         public boolean is_exposure_lock_supported;
         public boolean is_white_balance_lock_supported;
+        public boolean is_optical_stabilization_supported;
         public boolean is_video_stabilization_supported;
         public boolean is_photo_video_recording_supported;
         public boolean supports_white_balance_temperature;
@@ -131,7 +138,7 @@ public abstract class CameraController {
     }
 
     // Android docs and FindBugs recommend that Comparators also be Serializable
-    public static class RangeSorter implements Comparator<int[]>, Serializable {
+    static class RangeSorter implements Comparator<int[]>, Serializable {
         private static final long serialVersionUID = 5802214721073728212L;
         @Override
         public int compare(int[] o1, int[] o2) {
@@ -143,7 +150,7 @@ public abstract class CameraController {
     /* Sorts resolutions from highest to lowest, by area.
      * Android docs and FindBugs recommend that Comparators also be Serializable
      */
-    public static class SizeSorter implements Comparator<Size>, Serializable {
+    static class SizeSorter implements Comparator<Size>, Serializable {
         private static final long serialVersionUID = 5802214721073718212L;
 
         @Override
@@ -198,6 +205,7 @@ public abstract class CameraController {
             return width*41 + height;
         }
 
+        @NonNull
         public String toString() {
             StringBuilder s = new StringBuilder();
             for (int[] f : this.fps_ranges) {
@@ -358,6 +366,7 @@ public abstract class CameraController {
     public abstract int getISO();
     public abstract long getExposureTime();
     public abstract boolean setExposureTime(long exposure_time);
+    public abstract void setAperture(float aperture);
     public abstract CameraController.Size getPictureSize();
     public abstract void setPictureSize(int width, int height);
     public abstract CameraController.Size getPreviewSize();
@@ -420,6 +429,10 @@ public abstract class CameraController {
      *                       caught by the callera).
      */
     public abstract void setRaw(boolean want_raw, int max_raw_images);
+
+    /** Request a capture session compatible with high speed frame rates.
+     *  This should be called only when the preview is paused or not yet started.
+     */
     public abstract void setVideoHighSpeed(boolean setVideoHighSpeed);
     /**
      * setUseCamera2FakeFlash() should be called after creating the CameraController, and before calling getCameraFeatures() or
@@ -440,10 +453,30 @@ public abstract class CameraController {
     public boolean getUseCamera2FakeFlash() {
         return false;
     }
+    public abstract boolean getOpticalStabilization();
+    /** Whether to enable digital video stabilization. Should only be set to true when intending to
+     *  capture video.
+     */
     public abstract void setVideoStabilization(boolean enabled);
     public abstract boolean getVideoStabilization();
-    public abstract void setLogProfile(boolean use_log_profile, float log_profile_strength);
-    public abstract boolean isLogProfile();
+    public enum TonemapProfile {
+        TONEMAPPROFILE_OFF,
+        TONEMAPPROFILE_REC709,
+        TONEMAPPROFILE_SRGB,
+        TONEMAPPROFILE_LOG,
+        TONEMAPPROFILE_GAMMA,
+        TONEMAPPROFILE_JTVIDEO,
+        TONEMAPPROFILE_JTLOG,
+        TONEMAPPROFILE_JTLOG2
+    }
+
+    /** Sets a tonemap profile.
+     * @param tonemap_profile The type of the tonemap profile.
+     * @param log_profile_strength Only relevant if tonemap_profile set to TONEMAPPROFILE_LOG.
+     * @param gamma Only relevant if tonemap_profile set to TONEMAPPROFILE_GAMMA
+     */
+    public abstract void setTonemapProfile(TonemapProfile tonemap_profile, float log_profile_strength, float gamma);
+    public abstract TonemapProfile getTonemapProfile();
     public abstract int getJpegQuality();
     public abstract void setJpegQuality(int quality);
     public abstract int getZoom();
@@ -494,6 +527,12 @@ public abstract class CameraController {
     public abstract void reconnect() throws CameraControllerException;
     public abstract void setPreviewDisplay(SurfaceHolder holder) throws CameraControllerException;
     public abstract void setPreviewTexture(TextureView texture) throws CameraControllerException;
+    /** This should be called when using a TextureView, and the texture view has reported a change
+     *  in size via onSurfaceTextureSizeChanged.
+     */
+    public void updatePreviewTexture() {
+        // dummy implementation
+    }
     /** Starts the camera preview.
      *  @throws CameraControllerException if the camera preview fails to start.
      */
@@ -518,7 +557,15 @@ public abstract class CameraController {
     public abstract void setDisplayOrientation(int degrees);
     public abstract int getDisplayOrientation();
     public abstract int getCameraOrientation();
-    public abstract boolean isFrontFacing();
+    public enum Facing {
+        FACING_BACK,
+        FACING_FRONT,
+        FACING_EXTERNAL,
+        FACING_UNKNOWN // returned if the Camera API returned an error or an unknown type
+    }
+    /** Returns whether the camera is front, back or external.
+     */
+    public abstract Facing getFacing();
     public abstract void unlock();
     /** Call to initialise video recording, should call before MediaRecorder.prepare().
      * @param video_recorder The media recorder object.
@@ -568,6 +615,12 @@ public abstract class CameraController {
     }
     public long captureResultFrameDuration() {
         return 0;
+    }
+    public boolean captureResultHasAperture() {
+        return false;
+    }
+    public float captureResultAperture() {
+        return 0.0f;
     }
 	/*public boolean captureResultHasFocusDistance() {
 		return false;

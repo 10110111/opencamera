@@ -24,7 +24,9 @@ import android.renderscript.Script;
 import android.renderscript.ScriptIntrinsicHistogram;
 //import android.renderscript.ScriptIntrinsicResize;
 import android.renderscript.Type;
-import android.support.annotation.RequiresApi;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import android.util.Log;
 
 public class HDRProcessor {
@@ -49,6 +51,7 @@ public class HDRProcessor {
     // public for access by testing
     public int [] offsets_x = null;
     public int [] offsets_y = null;
+    @SuppressWarnings("CanBeFinal")
     public int sharp_index = 0;
 
     private enum HDRAlgorithm {
@@ -261,7 +264,7 @@ public class HDRProcessor {
 
             if( MyDebug.LOG ) {
                 // log samples to a CSV file
-                File file = new File(Environment.getExternalStorageDirectory().getPath() + "/net.sourceforge.opencamera.hdr_samples_" + id + ".csv");
+                File file = new File(context.getExternalFilesDir(null).getPath() + "/net.sourceforge.opencamera.hdr_samples_" + id + ".csv");
                 if( file.exists() ) {
                     if( !file.delete() ) {
                         // keep FindBugs happy by checking return argument
@@ -272,14 +275,14 @@ public class HDRProcessor {
                 try {
                     writer = new FileWriter(file);
                     //writer.append("Parameter," + parameter + "\n");
-                    writer.append("Parameters," + parameter_A + "," + parameter_B + "\n");
+                    writer.append("Parameters,").append(String.valueOf(parameter_A)).append(",").append(String.valueOf(parameter_B)).append("\n");
                     writer.append("X,Y,Weight\n");
                     for(int i=0;i<x_samples.size();i++) {
                         //Log.d(TAG, "log: " + i + " / " + x_samples.size());
                         double x = x_samples.get(i);
                         double y = y_samples.get(i);
                         double w = weights.get(i);
-                        writer.append(x + "," + y + "," + w + "\n");
+                        writer.append(String.valueOf(x)).append(",").append(String.valueOf(y)).append(",").append(String.valueOf(w)).append("\n");
                     }
                 }
                 catch (IOException e) {
@@ -301,6 +304,7 @@ public class HDRProcessor {
         }
     }
 
+    @SuppressWarnings("WeakerAccess")
     public interface SortCallback {
         /** This is called when the sort order for the input bitmaps is known, from darkest to brightest.
          * @param sort_order A list of length equal to the supplied bitmaps.size(). sort_order.get(i)
@@ -795,8 +799,17 @@ public class HDRProcessor {
             final float tonemap_denom = ((float)median_target)/(float)median_brightness - (255.0f / max_possible_value);
             if( MyDebug.LOG )
                 Log.d(TAG, "tonemap_denom: " + tonemap_denom);
-            if( tonemap_denom != 0.0f ) // just in case
+            if( tonemap_denom != 0.0f ) { // just in case
                 tonemap_scale_c = (255.0f - median_target) / tonemap_denom;
+                if( MyDebug.LOG )
+                    Log.d(TAG, "tonemap_scale_c (before setting min): " + tonemap_scale_c);
+                /*if( tonemap_scale_c < 0.5f*255.0f ) {
+                    throw new RuntimeException("tonemap_scale_c: " + tonemap_scale_c);
+                }*/
+                // important to set a min value, see testHDR58, testHDR59, testHDR60 - at least 0.25, but 0.5 works better:
+                //tonemap_scale_c = Math.max(tonemap_scale_c, 0.25f*255.0f);
+                tonemap_scale_c = Math.max(tonemap_scale_c, 0.5f*255.0f);
+            }
             //throw new RuntimeException(); // test
         }
         // Higher tonemap_scale_c values means darker results from the Reinhard tonemapping.
@@ -938,7 +951,7 @@ public class HDRProcessor {
     }
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void processSingleImage(List<Bitmap> bitmaps, boolean release_bitmaps, Bitmap output_bitmap, float hdr_alpha, int n_tiles, boolean ce_preserve_blacks, DROTonemappingAlgorithm dro_tonemapping_algorithm) throws HDRProcessorException {
+    private void processSingleImage(List<Bitmap> bitmaps, boolean release_bitmaps, Bitmap output_bitmap, float hdr_alpha, int n_tiles, boolean ce_preserve_blacks, DROTonemappingAlgorithm dro_tonemapping_algorithm) {
         if( MyDebug.LOG )
             Log.d(TAG, "processSingleImage");
 
@@ -1263,10 +1276,9 @@ public class HDRProcessor {
      * @param bitmap_avg_align Should be supplied if allocation_avg_align is non-null, and stores
      *                         the bitmap corresponding to the allocation_avg_align.
      * @param time_s         Time, for debugging.
-     * @throws HDRProcessorException
      */
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private AvgData processAvgCore(Allocation allocation_out, Allocation allocation_avg, Bitmap bitmap_avg, Bitmap bitmap_new, int width, int height, float avg_factor, int iso, float zoom_factor, Allocation allocation_avg_align, Bitmap bitmap_avg_align, long time_s) throws HDRProcessorException {
+    private AvgData processAvgCore(Allocation allocation_out, Allocation allocation_avg, Bitmap bitmap_avg, Bitmap bitmap_new, int width, int height, float avg_factor, int iso, float zoom_factor, Allocation allocation_avg_align, Bitmap bitmap_avg_align, long time_s) {
         if( MyDebug.LOG ) {
             Log.d(TAG, "processAvgCore");
             Log.d(TAG, "iso: " + iso);
@@ -1399,10 +1411,12 @@ public class HDRProcessor {
 
             if( bitmap_new_align != null ) {
                 bitmap_new_align.recycle();
+                //noinspection UnusedAssignment
                 bitmap_new_align = null;
             }
             if( allocation_new_align != null ) {
                 allocation_new_align.destroy();
+                //noinspection UnusedAssignment
                 allocation_new_align = null;
             }
 
@@ -1539,12 +1553,14 @@ public class HDRProcessor {
             if( MyDebug.LOG )
                 Log.d(TAG, "release bitmap_avg");
             bitmap_avg.recycle();
+            //noinspection UnusedAssignment
             bitmap_avg = null;
         }
         if( bitmap_new != null ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "release bitmap_new");
             bitmap_new.recycle();
+            //noinspection UnusedAssignment
             bitmap_new = null;
         }
 
@@ -1804,10 +1820,18 @@ public class HDRProcessor {
                 BitmapInfo bitmapInfo = new BitmapInfo(luminanceInfos[i], bitmaps.get(i), allocations[i], i);
                 bitmapInfos.add(bitmapInfo);
             }
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "before sorting:");
+                for(int i=0;i<allocations.length;i++) {
+                    Log.d(TAG, "    " + i + ": " + luminanceInfos[i]);
+                }
+            }
             Collections.sort(bitmapInfos, new Comparator<BitmapInfo>() {
                 @Override
                 public int compare(BitmapInfo o1, BitmapInfo o2) {
-                    return o1.luminanceInfo.median_value - o2.luminanceInfo.median_value;
+                    // important to use the code in LuminanceInfo.compareTo(), as that's also tested via the unit test
+                    // sortLuminanceInfo()
+                    return o1.luminanceInfo.compareTo(o2.luminanceInfo);
                 }
             });
             bitmaps.clear();
@@ -1817,8 +1841,9 @@ public class HDRProcessor {
                 allocations[i] = bitmapInfos.get(i).allocation;
             }
             if( MyDebug.LOG ) {
+                Log.d(TAG, "after sorting:");
                 for(int i=0;i<allocations.length;i++) {
-                    Log.d(TAG, i + ": median_value: " + luminanceInfos[i].median_value);
+                    Log.d(TAG, "    " + i + ": " + luminanceInfos[i]);
                 }
             }
             if( sort_cb != null ) {
@@ -1831,6 +1856,14 @@ public class HDRProcessor {
                 sort_cb.sortOrder(sort_order);
             }
         }
+        /*{
+            // test
+            for(int i = 0; i < luminanceInfos.length-1; i++) {
+                if( luminanceInfos[i].compareTo(luminanceInfos[i+1]) == 0 ) {
+                    throw new RuntimeException("this: " + luminanceInfos[i] + " , that: " + luminanceInfos[i+1]);
+                }
+            }
+        }*/
 
         int median_brightness = -1;
         if( use_mtb ) {
@@ -1864,6 +1897,16 @@ public class HDRProcessor {
             }
 
             mtb_allocations[i] = Allocation.createTyped(rs, Type.createXY(rs, Element.U8(rs), mtb_width, mtb_height));
+
+            // avoid too low/high median_values, otherwise we'll detect dark or light pixels as "noisy" - needed for testHDR61
+            final int min_diff_c = 4; // should be same value as in create_mtb.rs/create_mtb()
+            /*if( median_value < min_diff_c+1 || median_value > 255-(min_diff_c+1) ) {
+                throw new RuntimeException("image " + i + " has median_value: " + median_value); // test
+            }*/
+            median_value = Math.max(median_value, min_diff_c+1);
+            median_value = Math.min(median_value, 255-(min_diff_c+1));
+            if( MyDebug.LOG )
+                Log.d(TAG, i + ": median_value is now: " + median_value);
 
             // set parameters
             if( use_mtb )
@@ -2146,13 +2189,37 @@ public class HDRProcessor {
         return new BrightnessDetails(median_brightness);
     }
 
-    private static class LuminanceInfo {
+    public static class LuminanceInfo implements Comparable<LuminanceInfo> {
+        final int min_value;
         final int median_value;
+        final int hi_value;
         final boolean noisy;
 
-        LuminanceInfo(int median_value, boolean noisy) {
+        public LuminanceInfo(int min_value, int median_value, int hi_value, boolean noisy) {
+            this.min_value = min_value;
             this.median_value = median_value;
+            this.hi_value = hi_value;
             this.noisy = noisy;
+        }
+
+        @Override
+        @NonNull
+        public String toString() {
+            return "min: " + min_value + " , median: " + median_value + " , hi: " + hi_value + " , noisy: " + noisy;
+        }
+
+        @Override
+        public int compareTo(LuminanceInfo o) {
+            int value = this.median_value - o.median_value;
+            if( value == 0 ) {
+                // fall back to using min_value
+                value = this.min_value - o.min_value;
+            }
+            if( value == 0 ) {
+                // fall back to using hi_value
+                value = this.hi_value - o.hi_value;
+            }
+            return value;
         }
     }
 
@@ -2200,8 +2267,33 @@ public class HDRProcessor {
         int middle = total/2;
         int count = 0;
         boolean noisy = false;
+        int min_value = -1, hi_value = -1;
+        // first count backwards to get hi_value
+        for(int i=255;i>=0;i--) {
+            /*if( histo[i] > 0 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "max luminance " + i);
+                max_value = i;
+                break;
+            }*/
+            count += histo[i];
+            if( count >= total/10 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "hi luminance " + i);
+                hi_value = i;
+                break;
+            }
+        }
+
+        // then count forwards to get min and median values
+        count = 0;
         for(int i=0;i<256;i++) {
             count += histo[i];
+            if( min_value == -1 && histo[i] > 0 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "min luminance " + i);
+                min_value = i;
+            }
             if( count >= middle ) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "median luminance " + i);
@@ -2229,11 +2321,11 @@ public class HDRProcessor {
                         Log.d(TAG, "too dark/noisy");
                     noisy = true;
                 }
-                return new LuminanceInfo(i, noisy);
+                return new LuminanceInfo(min_value, i, hi_value, noisy);
             }
         }
         Log.e(TAG, "computeMedianLuminance failed");
-        return new LuminanceInfo(127, true);
+        return new LuminanceInfo(min_value, 127, hi_value, true);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
@@ -2664,7 +2756,7 @@ public class HDRProcessor {
         int max_brightness = 0;
         for(int i = 0; i < histo.length; i++) {
             count += histo[i];
-            sum_brightness += (double)(histo[i] * i);
+            sum_brightness += (histo[i] * i);
             if( count >= middle && median_brightness == -1 ) {
                 median_brightness = i;
             }

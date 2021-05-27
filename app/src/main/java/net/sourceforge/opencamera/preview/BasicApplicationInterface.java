@@ -91,7 +91,7 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
-    public Pair<Integer, Integer> getCameraResolutionPref() {
+    public Pair<Integer, Integer> getCameraResolutionPref(CameraResolutionConstraints constraints) {
         return null;
     }
 
@@ -141,12 +141,17 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
-    public boolean useVideoLogProfile() {
-        return false;
+    public CameraController.TonemapProfile getVideoTonemapProfile() {
+        return CameraController.TonemapProfile.TONEMAPPROFILE_OFF;
     }
 
     @Override
     public float getVideoLogProfileStrength() {
+        return 0;
+    }
+
+    @Override
+    public float getVideoProfileGamma() {
         return 0;
     }
 
@@ -344,6 +349,11 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
+    public float getAperturePref() {
+        return -1.0f;
+    }
+
+    @Override
     public boolean getOptimiseAEForDROPref() {
         return false;
     }
@@ -414,8 +424,16 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
-    public void stoppedVideo(int video_method, Uri uri, String filename) {
+    public void stoppedVideo(VideoMethod video_method, Uri uri, String filename) {
 
+    }
+
+    @Override
+    public void restartedVideo(final VideoMethod video_method, final Uri uri, final String filename) {
+    }
+
+    @Override
+    public void deleteUnusedVideo(final VideoMethod video_method, final Uri uri, final String filename) {
     }
 
     @Override

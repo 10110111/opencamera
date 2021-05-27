@@ -12,6 +12,7 @@ copy %src%\gradlew.bat %dst%
 copy %src%\makesrcarchive.bat %dst%
 copy %src%\opencamera_source.txt %dst%
 copy %src%\gpl-3.0.txt %dst%
+copy %src%\androidx_LICENSE-2.0.txt %dst%
 copy %src%\google_material_design_icons_LICENSE-2.0.txt %dst%
 copy %src%\settings.gradle %dst%
 
@@ -22,6 +23,11 @@ copy %src%\app\build.gradle %dst%\app\
 
 mkdir %dst%\gradle
 xcopy %src%\gradle %dst%\gradle /E /Y
+
+REM We copy the inspectionProfiles as this stores which Android inspection warnings/errors we've disabled
+mkdir %dst%\.idea
+mkdir %dst%\.idea\inspectionProfiles
+xcopy %src%\.idea\inspectionProfiles %dst%\.idea\inspectionProfiles /E /Y
 
 mkdir %dst%\_docs
 REM xcopy %src%\_docs %dst%\_docs /E /Y

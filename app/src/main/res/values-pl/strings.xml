@@ -111,7 +111,7 @@
     <string name="preference_save_location">Lokalizacja zapisu</string>
     <string name="preference_save_location_summary">Folder, do którego będą zapisywane pliki</string>
     <string name="preference_using_saf">Używaj SAF (systemowa obsługa dostępu do pamięci)</string>
-    <string name="preference_using_saf_summary">Używa Storage Access Framework Androida 5 do zapisu plików zdjęć i filmów</string>
+    <string name="preference_using_saf_summary">Używa Storage Access Framework do zapisu plików zdjęć i filmów</string>
     <string name="preference_save_photo_prefix">Przedrostek nazw zdjęć</string>
     <string name="preference_save_photo_prefix_summary">Przedrostek używany w nazwach plików zdjęć</string>
     <string name="preference_save_video_prefix">Przedrostek nazw filmów</string>
@@ -227,7 +227,7 @@
     <string name="preference_donate">Przekaż darowiznę</string>
     <string name="preference_donate_summary">Jeśli spodobała Ci się ta aplikacja rozważ przekazanie darowizny, która wesprze rozwój aplikacji. Możesz to zrobić poprzez zakup specjalnej aplikacji - dotknij tutaj aby otworzyć stronę. Dzięki!</string>
     <string name="preference_use_camera2">Używaj Camera2 API</string>
-    <string name="preference_use_camera2_summary">Włącza Camera2 API Androida 5, które oferuje wiele dodatkowych funkcji, ale może działać niepoprawnie na niektórych urządzeniach (może spowodować restart)</string>
+    <string name="preference_use_camera2_summary">Włącza Camera2 API, które oferuje wiele dodatkowych funkcji, ale może działać niepoprawnie na niektórych urządzeniach (może spowodować restart)</string>
     <string name="preference_about">O aplikacji</string>
     <string name="preference_about_summary">Informacje o aplikacji i debugowanie</string>
     <string name="preference_reset">Reset ustawień</string>
@@ -273,7 +273,7 @@
     <string name="speech_recognizer_started">Powiedz \"cheese\"</string>
     <string name="audio_listener_started">Wydaj głośny dźwięk</string>
     <string name="auto_stabilise_info">Autopoziomowanie obraca zdjęcia tak jakby były zrobione przy poziomicy.\n\nObrócone zdjęcia będą w nieco mniejszej rozdzielczości, gdyż po obróceniu konieczne jest wykadrowanie.</string>
-    <string name="raw_info">Pliki DNG zawierają nieskompresowane i nieprzetworzone dane z aparatu.\n\nWiększość aplikacji nie obsługuje formatu DNG dlatego najlepiej używać do ich edycji specjalnych aplikacji np. Snapseed lib Lightroom.\n\nOpcje takie jak stemplowanie lub autopoziomowanie nie mają zastosowania do plików DNG.\n\nPliki w formacie DNG zajmują dużo miejsca. Do przenoszenia lub kasowania ich można użyć menedżera plików.\n\nFormat DNG jest dostępny tylko w trybie standardowym i DRO.</string>
+    <string name="raw_info">Pliki DNG zawierają nieskompresowane i nieprzetworzone dane z aparatu.\n\nWiększość aplikacji nie obsługuje formatu DNG dlatego najlepiej używać do ich edycji specjalnych aplikacji.\n\nOpcje takie jak stemplowanie lub autopoziomowanie nie mają zastosowania do plików DNG.\n\nPliki w formacie DNG zajmują dużo miejsca. Do przenoszenia lub kasowania ich można użyć menedżera plików.\n\nFormat DNG jest dostępny tylko w trybie standardowym i DRO.</string>
     <string name="hdr_info">Tryb HDR jest przydatny w ujęciach z obszarami o dużych różnicach w jasności. Polega on na wykonaniu kilku zdjęć o różnej ekspozycji i połączeniu w jeden obraz.\n\nZauważ, że tryb HDR jest nieodpowiedni do fotografowania poruszających się obiektów, może to skutkować w mniej dokładną reprodukcję kolorów.\n\nWykonanie zdjęcia w HDR jest wolniejsze.</string>
     <string name="dont_show_again">Nie pokazuj ponownie</string>
     <string name="photo_mode">Tryb fotografowania</string>
@@ -420,6 +420,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Bez limitu</string>
 
     <string name="preference_burst_interval_no_delay">Bez opóźnienia</string>
@@ -473,4 +480,8 @@
     <string name="preference_stamp_style_shadowed">Cieniowany tekst</string>
     <string name="preference_stamp_style_plain">Czysty tekst</string>
 
+    <string name="preference_immersive_mode_off">Wyłączone</string>
+    <string name="preference_immersive_mode_navigation">Ukryj tylko przyciski nawigacyjne</string>
+    <string name="preference_immersive_mode_gui">Ukryj graficzny interfejs</string>
+    <string name="preference_immersive_mode_everything">Ukryj wszystko</string>
 </resources>

@@ -112,7 +112,7 @@
     <string name="preference_save_location">Local de armazenamento</string>
     <string name="preference_save_location_summary">Pasta para guardar os ficheiros das fotografias/vídeos</string>
     <string name="preference_using_saf">Usar Storage Access Framework</string>
-    <string name="preference_using_saf_summary">Optar por usar o Storage Access Framework do Android 5 para guardar fotografias e vídeos</string>
+    <string name="preference_using_saf_summary">Optar por usar o Storage Access Framework para guardar fotografias e vídeos</string>
     <string name="preference_save_photo_prefix">Prefixo das fotografias guardadas</string>
     <string name="preference_save_photo_prefix_summary">O prefixo usado para guardar o nome dos ficheiros das fotografias</string>
     <string name="preference_save_video_prefix">Prefixo dos vídeos guardados</string>
@@ -228,7 +228,7 @@
     <string name="preference_donate">Doar para apoiar o desenvolvimento</string>
     <string name="preference_donate_summary">Se gosta desta aplicação, por favor concidere fazer um donativo para apoiar o desenvolvimento. Pode fazê-lo ao comprar a minha "aplicação de donativo" - clique nesta opção para abrir a página da minha aplicação de donativo. Obrigado!</string>
     <string name="preference_use_camera2">Usar API Camera2</string>
-    <string name="preference_use_camera2_summary">Ativa a API Camera2 do Android 5 - oferece funcionalidades extra, mas é atualmente experimental (causará reinício)</string>
+    <string name="preference_use_camera2_summary">Ativa a API Camera2 - oferece funcionalidades extra, mas é atualmente experimental (causará reinício)</string>
     <string name="preference_about">Sobre</string>
     <string name="preference_about_summary">Informações da aplicação e de depuração</string>
     <string name="preference_reset">Repor definições</string>
@@ -279,7 +279,7 @@
     <string name="audio_listener_started">Faça um ruído alto</string>
 
     <string name="auto_stabilise_info">Auto-estabilizar irá rodar automaticamente as fotografias para que aparentem estar niveladas.\n\nNote que isto significa que as imagens sairão com uma resolução ligeramente menor (devido à rotação e ao recorte que é necessário).</string>
-    <string name="raw_info">Ficheiros DNG contêm a informação total descomprimida e não processada da sua câmara.\n\nA maioria das aplicações de galeria não reconhecem DNG, em vez disso as mesmas devem ser usadas com aplicações especializadas como Snapseed ou Lightroom.\n\nNote que várias opções de processamento como "Carimbar fotografias" e "Auto-estabilizar" serão aplicadas apenas às imagens JPEG, e não às imagens DNG.\n\nFicheiros DNG utilizam muito espaço; um explorador de ficheiros poderá ser útil para transferir ou eliminar os mesmos.</string>
+    <string name="raw_info">Ficheiros DNG contêm a informação total descomprimida e não processada da sua câmara.\n\nA maioria das aplicações de galeria não reconhecem DNG, em vez disso as mesmas devem ser usadas com aplicações especializadas.\n\nNote que várias opções de processamento como "Carimbar fotografias" e "Auto-estabilizar" serão aplicadas apenas às imagens JPEG, e não às imagens DNG.\n\nFicheiros DNG utilizam muito espaço; um explorador de ficheiros poderá ser útil para transferir ou eliminar os mesmos.</string>
 
     <string name="dont_show_again">Não mostrar novamente</string>
 
@@ -360,6 +360,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Ilimitado</string>
 
     <string name="preference_burst_interval_no_delay">Sem atraso</string>
@@ -413,4 +420,8 @@
     <string name="preference_stamp_style_shadowed">Texto sombreado</string>
     <string name="preference_stamp_style_plain">Texto simples</string>
 
+    <string name="preference_immersive_mode_off">Desligado</string>
+    <string name="preference_immersive_mode_navigation">Apenas ocultar os botões de navegação virtuais</string>
+    <string name="preference_immersive_mode_gui">Ocultar interface</string>
+    <string name="preference_immersive_mode_everything">Ocultar tudo</string>
 </resources>

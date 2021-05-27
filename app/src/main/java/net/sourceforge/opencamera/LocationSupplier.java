@@ -11,7 +11,7 @@ import android.location.LocationProvider;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
-import android.support.v4.content.ContextCompat;
+import androidx.core.content.ContextCompat;
 import android.util.Log;
 
 /** Handles listening for GPS location (both coarse and fine).
@@ -24,15 +24,79 @@ public class LocationSupplier {
     private MyLocationListener [] locationListeners;
     private volatile boolean test_force_no_location; // if true, always return null location; must be volatile for test project setting the state
 
+    private Location cached_location;
+    private long cached_location_ms;
+
     LocationSupplier(Context context) {
         this.context = context;
         locationManager = (LocationManager)context.getSystemService(Context.LOCATION_SERVICE);
     }
 
+    private Location getCachedLocation() {
+        if( cached_location != null ) {
+            long time_ms = System.currentTimeMillis();
+            if( time_ms <= cached_location_ms + 20000 ) {
+                return cached_location;
+            }
+            else {
+                cached_location = null;
+            }
+        }
+        return null;
+    }
+
+    /** Cache the current best location. Note that we intentionally call getLocation() from this
+     *  method rather than passing it a location from onLocationChanged(), as we don't want a
+     *  coarse location overriding a better fine location.
+     */
+    private void cacheLocation() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "cacheLocation");
+        Location location = getLocation();
+        if( location == null ) {
+            // this isn't an error as it can happen that we receive a call to onLocationChanged() after
+            // having freed the location listener (possibly because LocationManager had already queued
+            // a call to onLocationChanged?
+            // we should not set cached_location to null in such cases
+            Log.d(TAG, "### asked to cache location when location not available");
+        }
+        else {
+            cached_location = new Location(location);
+            cached_location_ms = System.currentTimeMillis();
+        }
+    }
+
+    public static class LocationInfo {
+        private boolean location_was_cached;
+
+        public boolean LocationWasCached() {
+            return location_was_cached;
+        }
+    }
+
+    /** If adding extra calls to this, consider whether explicit user permission is required, and whether
+     *  privacy policy needs updating.
+     * @return Returns null if location not available.
+     */
     public Location getLocation() {
-        // returns null if not available
-        if( locationListeners == null )
+        return getLocation(null);
+    }
+
+    /** If adding extra calls to this, consider whether explicit user permission is required, and whether
+     *  privacy policy needs updating.
+     * @param locationInfo Optional class to return additional information about the location.
+     * @return Returns null if location not available.
+     */
+    public Location getLocation(LocationInfo locationInfo) {
+        if( locationInfo != null )
+            locationInfo.location_was_cached = false; // init
+
+        if( locationListeners == null ) {
+            // if we have disabled location listening, then don't return a cached location anyway -
+            // in theory, callers should have already checked for user permission/setting before calling
+            // getLocation(), but just in case we didn't, don't want to return a cached location
             return null;
+        }
         if( test_force_no_location )
             return null;
         // location listeners should be stored in order best to worst
@@ -41,10 +105,13 @@ public class LocationSupplier {
             if( location != null )
                 return location;
         }
-        return null;
+        Location location = getCachedLocation();
+        if( location != null && locationInfo != null )
+            locationInfo.location_was_cached = true;
+        return location;
     }
 
-    private static class MyLocationListener implements LocationListener {
+    private class MyLocationListener implements LocationListener {
         private Location location;
         volatile boolean test_has_received_location; // must be volatile for test project reading the state
 
@@ -64,6 +131,7 @@ public class LocationSupplier {
                     Log.d(TAG, "lat " + location.getLatitude() + " long " + location.getLongitude() + " accuracy " + location.getAccuracy());
                 }
                 this.location = location;
+                cacheLocation();
             }
         }
 
@@ -80,6 +148,7 @@ public class LocationSupplier {
                     }
                     this.location = null;
                     this.test_has_received_location = false;
+                    cached_location = null;
                     break;
                 }
                 default:
@@ -95,16 +164,19 @@ public class LocationSupplier {
                 Log.d(TAG, "onProviderDisabled");
             this.location = null;
             this.test_has_received_location = false;
+            cached_location = null;
         }
     }
 
-    // returns false if location permission not available for either coarse or fine
+    /* Best to only call this from MainActivity.initLocation().
+     * @return Returns false if location permission not available for either coarse or fine.
+     */
     boolean setupLocationListener() {
         if( MyDebug.LOG )
             Log.d(TAG, "setupLocationListener");
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
         // Define a listener that responds to location updates
-        // we only set it up if store_location is true, to avoid unnecessarily wasting battery
+        // we only set it up if store_location is true, important for privacy and unnecessary battery use
         boolean store_location = sharedPreferences.getBoolean(PreferenceKeys.LocationPreferenceKey, false);
         if( store_location && locationListeners == null ) {
             // Note, ContextCompat.checkSelfPermission is meant to handle being called on any Android version, i.e., pre
@@ -189,6 +261,8 @@ public class LocationSupplier {
                 locationListeners[i] = null;
             }
             locationListeners = null;
+            if( MyDebug.LOG )
+                Log.d(TAG, "location listeners now freed");
         }
     }
 
@@ -208,6 +282,9 @@ public class LocationSupplier {
         this.test_force_no_location = test_force_no_location;
     }
 
+    /** Use this when we want to test (assert) that location listeners are turned on.
+     *  If we want to assert that they are turned off, then use noLocationListeners.
+     */
     public boolean hasLocationListeners() {
         if( this.locationListeners == null )
             return false;
@@ -218,6 +295,18 @@ public class LocationSupplier {
                 return false;
         }
         return true;
+    }
+
+    /** Use this when we want to test (assert) that location listeners are turned on. Note that this
+     *  is NOT an inverse of hasLocationListeners. For example this means that if
+     *  locationListeners.length==1, hasLocationListeners would return false (so we'd flag up that
+     *  we've not set them up correctly), but noLocationListeners would also return false (to flag
+     *  up that we did set some location listeners up).
+     */
+    public boolean noLocationListeners() {
+        if( this.locationListeners == null )
+            return true;
+        return false;
     }
 
     public static String locationToDMS(double coord) {

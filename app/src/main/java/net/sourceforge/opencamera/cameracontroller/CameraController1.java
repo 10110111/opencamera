@@ -208,7 +208,7 @@ public class CameraController1 extends CameraController {
                 Log.d(TAG, "flash supported");
         }
         else {
-            if( isFrontFacing() ) {
+            if( getFacing() == Facing.FACING_FRONT ) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "front-screen with no flash");
                 output_modes.clear(); // clear any pre-existing mode (see note above about Samsung Galaxy S7)
@@ -718,6 +718,11 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
+    public void setAperture(float aperture) {
+        // not supported for CameraController1
+    }
+
+    @Override
     public CameraController.Size getPictureSize() {
     	/*Camera.Parameters parameters = this.getParameters();
     	Camera.Size camera_size = parameters.getPictureSize();
@@ -872,6 +877,12 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
+    public boolean getOpticalStabilization() {
+        // not supported for CameraController1
+        return false;
+    }
+
+    @Override
     public void setVideoStabilization(boolean enabled) {
         Camera.Parameters parameters = this.getParameters();
         parameters.setVideoStabilization(enabled);
@@ -884,14 +895,14 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
-    public void setLogProfile(boolean use_log_profile, float log_profile_strength) {
+    public void setTonemapProfile(TonemapProfile tonemap_profile, float log_profile_strength, float gamma) {
         // not supported for CameraController1!
     }
 
     @Override
-    public boolean isLogProfile() {
+    public TonemapProfile getTonemapProfile() {
         // not supported for CameraController1!
-        return false;
+        return TonemapProfile.TONEMAPPROFILE_OFF;
     }
 
     public int getJpegQuality() {
@@ -1128,6 +1139,8 @@ public class CameraController1 extends CameraController {
         String flash_mode = "";
         switch(flash_value) {
             case "flash_off":
+            case "flash_frontscreen_on":
+            case "flash_frontscreen_torch":
                 flash_mode = Camera.Parameters.FLASH_MODE_OFF;
                 break;
             case "flash_auto":
@@ -1141,10 +1154,6 @@ public class CameraController1 extends CameraController {
                 break;
             case "flash_red_eye":
                 flash_mode = Camera.Parameters.FLASH_MODE_RED_EYE;
-                break;
-            case "flash_frontscreen_on":
-            case "flash_frontscreen_torch":
-                flash_mode = Camera.Parameters.FLASH_MODE_OFF;
                 break;
         }
         return flash_mode;
@@ -1297,6 +1306,9 @@ public class CameraController1 extends CameraController {
     }
 
     public void setLocationInfo(Location location) {
+        // don't log location, in case of privacy!
+        if( MyDebug.LOG )
+            Log.d(TAG, "setLocationInfo");
         Camera.Parameters parameters = this.getParameters();
         parameters.removeGpsData();
         parameters.setGpsTimestamp(System.currentTimeMillis() / 1000); // initialise to a value (from Android camera source)
@@ -1868,8 +1880,16 @@ public class CameraController1 extends CameraController {
         return camera_info.orientation;
     }
 
-    public boolean isFrontFacing() {
-        return (camera_info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT);
+    @Override
+    public Facing getFacing() {
+        switch( camera_info.facing ) {
+            case Camera.CameraInfo.CAMERA_FACING_FRONT:
+                return Facing.FACING_FRONT;
+            case Camera.CameraInfo.CAMERA_FACING_BACK:
+                return Facing.FACING_BACK;
+        }
+        Log.e(TAG, "unknown camera_facing: " + camera_info.facing);
+        return Facing.FACING_UNKNOWN;
     }
 
     public void unlock() {
@@ -1883,7 +1903,7 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
-    public void initVideoRecorderPostPrepare(MediaRecorder video_recorder, boolean want_photo_video_recording) throws CameraControllerException {
+    public void initVideoRecorderPostPrepare(MediaRecorder video_recorder, boolean want_photo_video_recording) {
         // no further actions necessary
     }
 

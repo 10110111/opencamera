@@ -19,6 +19,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.media.AudioManager;
 import android.os.Build;
+import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -33,6 +34,7 @@ import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.Animation;
 import android.view.animation.ScaleAnimation;
 import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
@@ -65,6 +67,7 @@ public class MainUI {
     private UIPlacement ui_placement = UIPlacement.UIPLACEMENT_RIGHT;
     private View top_icon = null;
     private boolean view_rotate_animation;
+    private final static int view_rotate_animation_duration = 100; // duration in ms of the icon rotation animation
 
     private boolean immersive_mode;
     private boolean show_gui_photo = true; // result of call to showGUI() - false means a "reduced" GUI is displayed, whilst taking photo or video
@@ -91,6 +94,7 @@ public class MainUI {
     private final Map<String, View> test_ui_buttons = new Hashtable<>();
     public int test_saved_popup_width;
     public int test_saved_popup_height;
+    public volatile int test_navigation_gap;
 
     public MainUI(MainActivity main_activity) {
         if( MyDebug.LOG )
@@ -150,7 +154,7 @@ public class MainUI {
             rotate_by += 360.0f;
         // view.animate() modifies the view's rotation attribute, so it ends up equivalent to view.setRotation()
         // we use rotationBy() instead of rotation(), so we get the minimal rotation for clockwise vs anti-clockwise
-        view.animate().rotationBy(rotate_by).setDuration(100).setInterpolator(new AccelerateDecelerateInterpolator()).start();
+        view.animate().rotationBy(rotate_by).setDuration(view_rotate_animation_duration).setInterpolator(new AccelerateDecelerateInterpolator()).start();
     }
 
     public void layoutUI() {
@@ -238,9 +242,13 @@ public class MainUI {
             iconpanel_right_of = RelativeLayout.ABOVE;
             iconpanel_above = RelativeLayout.LEFT_OF;
             iconpanel_below = RelativeLayout.RIGHT_OF;
+            //noinspection SuspiciousNameCombination
             iconpanel_align_parent_left = RelativeLayout.ALIGN_PARENT_BOTTOM;
+            //noinspection SuspiciousNameCombination
             iconpanel_align_parent_right = RelativeLayout.ALIGN_PARENT_TOP;
+            //noinspection SuspiciousNameCombination
             iconpanel_align_parent_top = RelativeLayout.ALIGN_PARENT_LEFT;
+            //noinspection SuspiciousNameCombination
             iconpanel_align_parent_bottom = RelativeLayout.ALIGN_PARENT_RIGHT;
         }
 
@@ -248,6 +256,25 @@ public class MainUI {
         Display display = main_activity.getWindowManager().getDefaultDisplay();
         display.getSize(display_size);
         final int display_height = Math.min(display_size.x, display_size.y);
+
+        /*int navigation_gap = 0;
+		if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 ) {
+            final int display_width = Math.max(display_size.x, display_size.y);
+            Point real_display_size = new Point();
+            display.getRealSize(real_display_size);
+            final int real_display_width = Math.max(real_display_size.x, real_display_size.y);
+            navigation_gap = real_display_width - display_width;
+            if( MyDebug.LOG ) {
+                Log.d(TAG, "display_width: " + display_width);
+                Log.d(TAG, "real_display_width: " + real_display_width);
+                Log.d(TAG, "navigation_gap: " + navigation_gap);
+            }
+        }*/
+        int navigation_gap = main_activity.getNavigationGap();
+        test_navigation_gap = navigation_gap;
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "navigation_gap: " + navigation_gap);
+        }
 
         if( !popup_container_only )
         {
@@ -282,6 +309,7 @@ public class MainUI {
                 layoutParams.addRule(below, 0);
                 layoutParams.addRule(left_of, 0);
                 layoutParams.addRule(right_of, 0);
+                layoutParams.setMargins(0, 0, navigation_gap, 0);
                 view.setLayoutParams(layoutParams);
                 setViewRotation(view, ui_rotation);
             }
@@ -415,6 +443,7 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -422,6 +451,12 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
+            view.setLayoutParams(layoutParams);
+            setViewRotation(view, ui_rotation);
+
+            view = main_activity.findViewById(R.id.switch_multi_camera);
+            layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -429,6 +464,7 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -436,6 +472,7 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -443,6 +480,7 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -450,6 +488,7 @@ public class MainUI {
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
@@ -459,6 +498,7 @@ public class MainUI {
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
             layoutParams.addRule(align_parent_top, 0);
             layoutParams.addRule(align_parent_bottom, RelativeLayout.TRUE);
+            layoutParams.setMargins(0, 0, navigation_gap, 0);
             view.setLayoutParams(layoutParams);
             view.setRotation(180.0f); // should always match the zoom_seekbar, so that zoom in and out are in the same directions
 
@@ -475,12 +515,14 @@ public class MainUI {
                 layoutParams.addRule(align_parent_right, 0);
                 layoutParams.addRule(align_parent_top, 0);
                 layoutParams.addRule(align_parent_bottom, 0);
+                layoutParams.setMargins(0, 0, 0, 0);
             }
             else {
                 layoutParams.addRule(align_parent_left, 0);
                 layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
                 layoutParams.addRule(align_parent_top, 0);
                 layoutParams.addRule(align_parent_bottom, RelativeLayout.TRUE);
+                layoutParams.setMargins(0, 0, navigation_gap, 0);
                 // need to clear the others, in case we turn zoom controls on/off
                 layoutParams.addRule(align_left, 0);
                 layoutParams.addRule(align_right, 0);
@@ -515,9 +557,11 @@ public class MainUI {
             // set seekbar info
             int width_dp;
             if( ui_rotation == 0 || ui_rotation == 180 ) {
+                // landscape
                 width_dp = 350;
             }
             else {
+                // portrait
                 width_dp = 250;
                 // prevent being too large on smaller devices (e.g., Galaxy Nexus or smaller)
                 int max_width_dp = getMaxHeightDp(true);
@@ -535,15 +579,71 @@ public class MainUI {
             setViewRotation(view, ui_rotation);
             view.setTranslationX(0.0f);
             view.setTranslationY(0.0f);
+
             if( ui_rotation == 90 || ui_rotation == 270 ) {
+                // portrait
                 view.setTranslationX(2*height_pixels);
             }
             else if( ui_rotation == 0 ) {
+                // landscape
                 view.setTranslationY(height_pixels);
             }
             else {
+                // upside-down landscape
                 view.setTranslationY(-1*height_pixels);
             }
+
+            /*
+            // align sliders_container
+            RelativeLayout.LayoutParams lp = (RelativeLayout.LayoutParams)view.getLayoutParams();
+            if( ui_rotation == 90 || ui_rotation == 270 ) {
+                // portrait
+                view.setTranslationX(2*height_pixels);
+                lp.addRule(left_of, 0);
+                lp.addRule(right_of, 0);
+                lp.addRule(above, 0);
+                lp.addRule(below, 0);
+                lp.addRule(align_parent_top, 0);
+                lp.addRule(align_parent_bottom, 0);
+            }
+            else if( ui_rotation == (ui_placement == UIPlacement.UIPLACEMENT_LEFT ? 180 : 0) ) {
+                // landscape (or upside-down landscape if ui-left)
+                view.setTranslationY(0);
+                lp.addRule(left_of, R.id.zoom_seekbar);
+                lp.addRule(right_of, 0);
+
+                if( main_activity.showManualFocusSeekbar(true) ) {
+                    lp.addRule(above, R.id.focus_bracketing_target_seekbar);
+                    lp.addRule(below, 0);
+                    lp.addRule(align_parent_top, 0);
+                    lp.addRule(align_parent_bottom, 0);
+                }
+                else if( main_activity.showManualFocusSeekbar(false) ) {
+                    lp.addRule(above, R.id.focus_seekbar);
+                    lp.addRule(below, 0);
+                    lp.addRule(align_parent_top, 0);
+                    lp.addRule(align_parent_bottom, 0);
+                }
+                else {
+                    lp.addRule(above, 0);
+                    lp.addRule(below, 0);
+                    lp.addRule(align_parent_top, 0);
+                    lp.addRule(align_parent_bottom, RelativeLayout.TRUE);
+                }
+            }
+            else {
+                // upside-down landscape (or landscape if ui-left)
+                if( ui_rotation == 0 )
+                    view.setTranslationY(height_pixels);
+                else
+                    view.setTranslationY(-1*height_pixels);
+                lp.addRule(left_of, 0);
+                lp.addRule(right_of, 0);
+                lp.addRule(above, 0);
+                lp.addRule(below, 0);
+                lp.addRule(align_parent_bottom, 0);
+            }
+            view.setLayoutParams(lp);*/
 
             view = main_activity.findViewById(R.id.exposure_seekbar);
             RelativeLayout.LayoutParams lp = (RelativeLayout.LayoutParams)view.getLayoutParams();
@@ -681,8 +781,10 @@ public class MainUI {
         else if( ui_placement == UIPlacement.UIPLACEMENT_TOP ) {
             view.setPivotX(0.0f);
             view.setPivotY(0.0f);
-            if( ui_rotation == 90 )
+            if( ui_rotation == 90 ) {
+                //noinspection SuspiciousNameCombination
                 view.setTranslationX(popup_height);
+            }
             else if( ui_rotation == 270 ) {
                 view.setTranslationY(display_height);
             }
@@ -691,8 +793,10 @@ public class MainUI {
             view.setPivotX(popup_width);
             view.setPivotY(ui_placement == UIPlacement.UIPLACEMENT_RIGHT ? 0.0f : popup_height);
             if( ui_placement == UIPlacement.UIPLACEMENT_RIGHT ) {
-                if( ui_rotation == 90 )
+                if( ui_rotation == 90 ) {
+                    //noinspection SuspiciousNameCombination
                     view.setTranslationY( popup_width );
+                }
                 else if( ui_rotation == 270 )
                     view.setTranslationX( - popup_height );
             }
@@ -759,11 +863,19 @@ public class MainUI {
             ImageButton view = main_activity.findViewById(R.id.switch_camera);
             int content_description;
             int cameraId = main_activity.getNextCameraId();
-            if( main_activity.getPreview().getCameraControllerManager().isFrontFacing( cameraId ) ) {
-                content_description = R.string.switch_to_front_camera;
-            }
-            else {
-                content_description = R.string.switch_to_back_camera;
+            switch( main_activity.getPreview().getCameraControllerManager().getFacing( cameraId  ) ) {
+                case FACING_FRONT:
+                    content_description = R.string.switch_to_front_camera;
+                    break;
+                case FACING_BACK:
+                    content_description = R.string.switch_to_back_camera;
+                    break;
+                case FACING_EXTERNAL:
+                    content_description = R.string.switch_to_external_camera;
+                    break;
+                default:
+                    content_description = R.string.switch_to_unknown_camera;
+                    break;
             }
             if( MyDebug.LOG )
                 Log.d(TAG, "content_description: " + main_activity.getResources().getString(content_description));
@@ -832,6 +944,29 @@ public class MainUI {
                 view_rotate_animation = true;
                 layoutUI();
                 view_rotate_animation = false;
+
+                // Call DrawPreview.updateSettings() so that we reset calculations that depend on
+                // getLocationOnScreen() - since the result is affected by a View's rotation, we need
+                // to recompute - this also means we need to delay slightly until after the rotation
+                // animation is complete.
+                // To reproduce issues, rotate from upside-down-landscape to portrait, and observe
+                // the info-text placement (when using icons-along-top), or with on-screen angle
+                // displayed when in 16:9 preview.
+                // Potentially we could use Animation.setAnimationListener(), but we set a separate
+                // animation for every icon.
+                // Note, this seems to be unneeded due to the fix in DrawPreview for
+                // "getRotation() == 180.0f", but good to clear the cached values (e.g., in case we
+                // compute them during when the icons are being rotated).
+                final Handler handler = new Handler();
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if( MyDebug.LOG )
+                            Log.d(TAG, "onOrientationChanged->postDelayed()");
+
+                        main_activity.getApplicationInterface().getDrawPreview().updateSettings();
+                    }
+                }, view_rotate_animation_duration+20);
             }
         }
     }
@@ -884,6 +1019,8 @@ public class MainUI {
     public boolean showCycleFlashIcon() {
         if( !main_activity.getPreview().supportsFlash() )
             return false;
+        if( main_activity.getPreview().isVideo() )
+            return false; // no point showing flash icon in video mode, as we only allow flash auto and flash torch, and we don't support torch on the on-screen cycle flash icon
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
         return sharedPreferences.getBoolean(PreferenceKeys.ShowCycleFlashPreferenceKey, false);
     }
@@ -909,6 +1046,7 @@ public class MainUI {
                     Log.d(TAG, "setImmersiveMode: set visibility: " + visibility);
                 // n.b., don't hide share and trash buttons, as they require immediate user input for us to continue
                 View switchCameraButton = main_activity.findViewById(R.id.switch_camera);
+                View switchMultiCameraButton = main_activity.findViewById(R.id.switch_multi_camera);
                 View switchVideoButton = main_activity.findViewById(R.id.switch_video);
                 View exposureButton = main_activity.findViewById(R.id.exposure);
                 View exposureLockButton = main_activity.findViewById(R.id.exposure_lock);
@@ -926,8 +1064,12 @@ public class MainUI {
                 View settingsButton = main_activity.findViewById(R.id.settings);
                 View zoomControls = main_activity.findViewById(R.id.zoom);
                 View zoomSeekBar = main_activity.findViewById(R.id.zoom_seekbar);
+                View focusSeekBar = main_activity.findViewById(R.id.focus_seekbar);
+                View focusBracketingTargetSeekBar = main_activity.findViewById(R.id.focus_bracketing_target_seekbar);
                 if( main_activity.getPreview().getCameraControllerManager().getNumberOfCameras() > 1 )
                     switchCameraButton.setVisibility(visibility);
+                if( main_activity.showSwitchMultiCamIcon() )
+                    switchMultiCameraButton.setVisibility(visibility);
                 switchVideoButton.setVisibility(visibility);
                 if( main_activity.supportsExposureButton() )
                     exposureButton.setVisibility(visibility);
@@ -963,6 +1105,10 @@ public class MainUI {
                 if( main_activity.getPreview().supportsZoom() && sharedPreferences.getBoolean(PreferenceKeys.ShowZoomSliderControlsPreferenceKey, true) ) {
                     zoomSeekBar.setVisibility(visibility);
                 }
+                if( main_activity.showManualFocusSeekbar(false) )
+                    focusSeekBar.setVisibility(visibility);
+                if( main_activity.showManualFocusSeekbar(true) )
+                    focusBracketingTargetSeekBar.setVisibility(visibility);
                 String pref_immersive_mode = sharedPreferences.getString(PreferenceKeys.ImmersiveModePreferenceKey, "immersive_mode_low_profile");
                 if( pref_immersive_mode.equals("immersive_mode_everything") ) {
                     if( sharedPreferences.getBoolean(PreferenceKeys.ShowTakePhotoPreferenceKey, true) ) {
@@ -1024,6 +1170,7 @@ public class MainUI {
                 final int visibility = is_panorama_recording ? View.GONE : (show_gui_photo && show_gui_video) ? View.VISIBLE : View.GONE; // for UI that is hidden while taking photo or video
                 final int visibility_video = is_panorama_recording ? View.GONE : show_gui_photo ? View.VISIBLE : View.GONE; // for UI that is only hidden while taking photo
                 View switchCameraButton = main_activity.findViewById(R.id.switch_camera);
+                View switchMultiCameraButton = main_activity.findViewById(R.id.switch_multi_camera);
                 View switchVideoButton = main_activity.findViewById(R.id.switch_video);
                 View exposureButton = main_activity.findViewById(R.id.exposure);
                 View exposureLockButton = main_activity.findViewById(R.id.exposure_lock);
@@ -1039,6 +1186,8 @@ public class MainUI {
                 View popupButton = main_activity.findViewById(R.id.popup);
                 if( main_activity.getPreview().getCameraControllerManager().getNumberOfCameras() > 1 )
                     switchCameraButton.setVisibility(visibility);
+                if( main_activity.showSwitchMultiCamIcon() )
+                    switchMultiCameraButton.setVisibility(visibility);
                 switchVideoButton.setVisibility(visibility);
                 if( main_activity.supportsExposureButton() )
                     exposureButton.setVisibility(visibility_video); // still allow exposure when recording video
@@ -1144,7 +1293,9 @@ public class MainUI {
     }
 
     public void updateCycleFlashIcon() {
-        String flash_value = main_activity.getApplicationInterface().getFlashPref();
+        // n.b., read from preview rather than saved application preference - so the icon updates correctly when in flash
+        // auto mode, but user switches to manual ISO where flash auto isn't supported
+        String flash_value = main_activity.getPreview().getCurrentFlashValue();
         if( flash_value != null ) {
             ImageButton view = main_activity.findViewById(R.id.cycle_flash);
             switch( flash_value ) {
@@ -1166,7 +1317,16 @@ public class MainUI {
                 case "flash_red_eye":
                     view.setImageResource(R.drawable.baseline_remove_red_eye_white_48);
                     break;
+                default:
+                    // just in case??
+                    Log.e(TAG, "unknown flash value " + flash_value);
+                    view.setImageResource(R.drawable.flash_off);
+                    break;
             }
+        }
+        else {
+            ImageButton view = main_activity.findViewById(R.id.cycle_flash);
+            view.setImageResource(R.drawable.flash_off);
         }
     }
 
@@ -1220,7 +1380,7 @@ public class MainUI {
         closePopup();
         mSelectingExposureUIElement = false;
         if( isExposureUIOpen() ) {
-            clearSeekBar();
+            closeExposureUI();
         }
         else if( main_activity.getPreview().getCameraController() != null ) {
             setupExposureUI();
@@ -1325,7 +1485,6 @@ public class MainUI {
         if (mExposureLine == 0) {
             iso_buttons_container.setBackgroundColor(highlightColor);
             //iso_buttons_container.setAlpha(0.5f);
-            return;
         } else if (mExposureLine == 1) {
             iso_seekbar.setBackgroundColor(highlightColor);
             //iso_seekbar.setAlpha(0.5f);
@@ -1597,12 +1756,16 @@ public class MainUI {
     private int iso_button_manual_index = -1;
     private final static String manual_iso_value = "m";
 
+    /** Opens the exposure UI if not already open, and sets up or updates the UI.
+     */
     public void setupExposureUI() {
         if( MyDebug.LOG )
             Log.d(TAG, "setupExposureUI");
         test_ui_buttons.clear();
         final SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
         final Preview preview = main_activity.getPreview();
+        ImageButton view = main_activity.findViewById(R.id.exposure);
+        view.setImageResource(R.drawable.ic_exposure_red_48dp);
         View sliders_container = main_activity.findViewById(R.id.sliders_container);
         sliders_container.setVisibility(View.VISIBLE);
         ViewGroup iso_buttons_container = main_activity.findViewById(R.id.iso_buttons);
@@ -1667,7 +1830,8 @@ public class MainUI {
                         // also reset exposure time when changing from manual to auto from the popup menu:
                         editor.putLong(PreferenceKeys.ExposureTimePreferenceKey, CameraController.EXPOSURE_TIME_DEFAULT);
                         editor.apply();
-                        main_activity.updateForSettings("ISO: " + toast_option);
+                        preview.showToast("ISO: " + toast_option, 0, true); // supply offset_y_dp to be consistent with preview.setExposure(), preview.setISO()
+                        main_activity.updateForSettings(true, ""); // already showed the toast, so block from showing again
                     }
                     else if( old_iso.equals(CameraController.ISO_DEFAULT) ) {
                         if( MyDebug.LOG )
@@ -1704,7 +1868,8 @@ public class MainUI {
                         }
 
                         editor.apply();
-                        main_activity.updateForSettings("ISO: " + toast_option);
+                        preview.showToast("ISO: " + toast_option, 0, true); // supply offset_y_dp to be consistent with preview.setExposure(), preview.setISO()
+                        main_activity.updateForSettings(true, ""); // already showed the toast, so block from showing again
                     }
                     else {
                         if( MyDebug.LOG )
@@ -1791,6 +1956,8 @@ public class MainUI {
         else {
             manual_white_balance_seek_bar.setVisibility(View.GONE);
         }
+
+        //layoutUI(); // needed to update alignment of exposure UI
     }
 
     /** If the exposure panel is open, updates the selected ISO button to match the current ISO value,
@@ -1862,7 +2029,12 @@ public class MainUI {
         }
     }
 
-    public void clearSeekBar() {
+    /** Closes the exposure UI.
+     */
+    public void closeExposureUI() {
+        ImageButton image_button = main_activity.findViewById(R.id.exposure);
+        image_button.setImageResource(R.drawable.ic_exposure_white_48dp);
+
         clearRemoteControlForExposureUI(); // must be called before we actually close the exposure panel
         View view = main_activity.findViewById(R.id.sliders_container);
         view.setVisibility(View.GONE);
@@ -1959,7 +2131,6 @@ public class MainUI {
 
     /**
      * Higlights the next LinearLayout view
-     * @param highlight
      */
     private void highlightPopupLine(boolean highlight, boolean goUp) {
         if( MyDebug.LOG ) {
@@ -1983,6 +2154,11 @@ public class MainUI {
             // Ensure we stay within our bounds:
             mPopupLine = (mPopupLine + count ) % count;
             View v = inside.getChildAt(mPopupLine);
+            if( MyDebug.LOG )
+                Log.d(TAG, "line: " + mPopupLine + " view: " + v);
+            // to test example with HorizontalScrollView, see popup menu on Nokia 8 with Camera2 API, the flash icons row uses a HorizontalScrollView
+            if( v instanceof HorizontalScrollView && ((HorizontalScrollView) v).getChildCount() > 0 )
+                v = ((HorizontalScrollView) v).getChildAt(0);
             if (v.isShown() && v instanceof LinearLayout ) {
                 if (highlight) {
                     v.setBackgroundColor(highlightColor);
@@ -1995,6 +2171,8 @@ public class MainUI {
                     v.setAlpha(1f);
                 }
                 foundLine = true;
+                if( MyDebug.LOG )
+                    Log.d(TAG, "found at line: " + foundLine);
             } else {
                 mPopupLine += goUp ? -1 : 1;
             }
@@ -2007,8 +2185,6 @@ public class MainUI {
      * Highlights an icon on a horizontal line, such as flash mode,
      * focus mode, etc. Checks that the popup is open in case it is
      * wrongly called, so that it doesn't crash the app.
-     * @param highlight
-     * @param goLeft
      */
     private void highlightPopupIcon(boolean highlight, boolean goLeft) {
         if( MyDebug.LOG ) {
@@ -2028,6 +2204,8 @@ public class MainUI {
             // (careful, modulo in Java will allow negative numbers, hence the line below:
             mPopupIcon= (mPopupIcon + count ) % count;
             View v = mHighlightedLine.getChildAt(mPopupIcon);
+            if( MyDebug.LOG )
+                Log.d(TAG, "row: " + mPopupIcon + " view: " + v);
             if (v instanceof ImageButton || v instanceof Button ) {
                 if (highlight) {
                     v.setBackgroundColor(highlightColor);
@@ -2037,6 +2215,8 @@ public class MainUI {
                 } else {
                     v.setBackgroundColor(Color.TRANSPARENT);
                 }
+                if( MyDebug.LOG )
+                    Log.d(TAG, "found icon at row: " + mPopupIcon);
                 foundIcon = true;
             } else {
                 mPopupIcon+= goLeft ? -1 : 1;
@@ -2117,7 +2297,7 @@ public class MainUI {
         if( MyDebug.LOG )
             Log.d(TAG, "open popup");
 
-        clearSeekBar();
+        closeExposureUI();
         main_activity.getPreview().cancelTimer(); // best to cancel any timer, in case we take a photo while settings window is open, or when changing settings
         main_activity.stopAudioListeners();
 

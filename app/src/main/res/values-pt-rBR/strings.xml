@@ -99,7 +99,7 @@
     <string name="preference_pause_preview">Pausar depois de tirar foto</string>
     <string name="preference_pause_preview_summary">Pausar a tela depois de tirar uma foto, com a opção para compartilhar ou deletar foto</string>
     <string name="preference_shutter_sound">Som de captura</string>
-    <string name="preference_shutter_sound_summary">Toca um som quando tira uma foto (requer Android 4.2+ para desabilitar)</string>
+    <string name="preference_shutter_sound_summary">Toca um som quando tira uma foto</string>
     <string name="preference_volume_keys">Teclas de volume</string>
     <string name="preference_save_location">Local de armazenamento</string>
     <string name="preference_save_location_summary">Escolha a pasta para salvar os arquivos de foto/vídeo</string>
@@ -288,6 +288,13 @@
     <string name="preference_burst_mode_4x">4x</string>
     <string name="preference_burst_mode_5x">5x</string>
     <string name="preference_burst_mode_10x">10x</string>
+    <string name="preference_burst_mode_20x">20x</string>
+    <string name="preference_burst_mode_30x">30x</string>
+    <string name="preference_burst_mode_40x">40x</string>
+    <string name="preference_burst_mode_50x">50x</string>
+    <string name="preference_burst_mode_100x">100x</string>
+    <string name="preference_burst_mode_200x">200x</string>
+    <string name="preference_burst_mode_500x">500x</string>
     <string name="preference_burst_mode_unlimited">Ilimitado</string>
 
     <string name="preference_burst_interval_no_delay">Nenhum</string>
@@ -323,4 +330,8 @@
     <string name="preference_ui_placement_left">Interface para canhoto</string>
     <string name="preference_ui_placement_right">Interface para destro</string>
 
+    <string name="preference_immersive_mode_off">Desligado</string>
+    <string name="preference_immersive_mode_navigation">Somente esconder as teclas virtuais de navegação</string>
+    <string name="preference_immersive_mode_gui">Esconder IGU</string>
+    <string name="preference_immersive_mode_everything">Esconder tudo</string>
 </resources>

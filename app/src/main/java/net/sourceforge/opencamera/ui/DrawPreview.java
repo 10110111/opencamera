@@ -1,6 +1,5 @@
 package net.sourceforge.opencamera.ui;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.DateFormat;
@@ -11,6 +10,8 @@ import java.util.List;
 import java.util.Locale;
 
 import net.sourceforge.opencamera.GyroSensor;
+import net.sourceforge.opencamera.ImageSaver;
+import net.sourceforge.opencamera.LocationSupplier;
 import net.sourceforge.opencamera.MainActivity;
 import net.sourceforge.opencamera.MyApplicationInterface;
 import net.sourceforge.opencamera.MyDebug;
@@ -32,21 +33,22 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Point;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
-import android.media.ExifInterface;
+import android.location.Location;
 import android.net.Uri;
 import android.os.BatteryManager;
-import android.os.Build;
 import android.preference.PreferenceManager;
-import android.provider.MediaStore;
 import android.util.Log;
 import android.util.Pair;
+import android.view.Display;
 import android.view.Surface;
 import android.view.View;
+import android.widget.RelativeLayout;
 
 public class DrawPreview {
     private static final String TAG = "DrawPreview";
@@ -61,6 +63,7 @@ public class DrawPreview {
     private boolean has_settings;
     private MyApplicationInterface.PhotoMode photoMode;
     private boolean show_time_pref;
+    private boolean show_camera_id_pref;
     private boolean show_free_memory_pref;
     private boolean show_iso_pref;
     private boolean show_video_max_amp_pref;
@@ -88,10 +91,13 @@ public class DrawPreview {
     private String ghost_image_pref;
     private String ghost_selected_image_pref = "";
     private Bitmap ghost_selected_image_bitmap;
+    private int ghost_image_alpha;
     private boolean want_histogram;
     private Preview.HistogramType histogram_type;
     private boolean want_zebra_stripes;
     private int zebra_stripes_threshold;
+    private int zebra_stripes_color_foreground;
+    private int zebra_stripes_color_background;
     private boolean want_focus_peaking;
     private int focus_peaking_color_pref;
 
@@ -103,11 +109,15 @@ public class DrawPreview {
     private final float scale;
     private final float stroke_width; // stroke_width used for various UI elements
     private Calendar calendar;
-    private final DateFormat dateFormatTimeInstance = DateFormat.getTimeInstance();
+    private DateFormat dateFormatTimeInstance;
     private final String ybounds_text;
     private final int [] temp_histogram_channel = new int[256];
+    private final LocationSupplier.LocationInfo locationInfo = new LocationSupplier.LocationInfo();
+    private final int [] auto_stabilise_crop = new int [2];
+    //private final DecimalFormat decimal_format_1dp_force0 = new DecimalFormat("0.0");
     // cached Rects for drawTextWithBackground() calls
     private Rect text_bounds_time;
+    private Rect text_bounds_camera_id;
     private Rect text_bounds_free_memory;
     private Rect text_bounds_angle_single;
     private Rect text_bounds_angle_double;
@@ -123,6 +133,9 @@ public class DrawPreview {
 
     private String current_time_string;
     private long last_current_time_time;
+
+    private String camera_id_string;
+    private long last_camera_id_time;
 
     private String iso_exposure_string;
     private boolean is_scanning;
@@ -171,6 +184,7 @@ public class DrawPreview {
     private Bitmap last_thumbnail; // thumbnail of last picture taken
     private volatile boolean thumbnail_anim; // whether we are displaying the thumbnail animation; must be volatile for test project reading the state
     private long thumbnail_anim_start_ms = -1; // time that the thumbnail animation started
+    public volatile int test_thumbnail_anim_count;
     private final RectF thumbnail_anim_src_rect = new RectF();
     private final RectF thumbnail_anim_dst_rect = new RectF();
     private final Matrix thumbnail_anim_matrix = new Matrix();
@@ -203,9 +217,20 @@ public class DrawPreview {
     private float view_angle_y_preview;
     private long last_view_angles_time;
 
+    private int take_photo_top; // coordinate (in canvas x coordinates) of top of the take photo icon
+    private long last_take_photo_top_time;
+
+    private int top_icon_shift; // shift that may be needed for on-screen text to avoid clashing with icons (when arranged "along top")
+    private long last_top_icon_shift_time;
+
+    private int focus_seekbars_margin_left = -1; // margin left that's been set for the focus seekbars
+
     // OSD extra lines
     private String OSDLine1;
     private String OSDLine2;
+
+    private final static int histogram_width_dp = 100;
+    private final static int histogram_height_dp = 60;
 
     public DrawPreview(MainActivity main_activity, MyApplicationInterface applicationInterface) {
         if( MyDebug.LOG )
@@ -348,6 +373,28 @@ public class DrawPreview {
         return main_activity;
     }
 
+    /** Computes the x coordinate on screen of left side of the view, equivalent to
+     *  view.getLocationOnScreen(), but we undo the effect of the view's rotation.
+     *  This is because getLocationOnScreen() will return the coordinates of the view's top-left
+     *  *after* applying the rotation, when we want the top left of the icon as shown on screen.
+     *  This should not be called every frame but instead should be cached, due to cost of calling
+     *  view.getLocationOnScreen().
+     */
+    private int getViewOnScreenX(View view) {
+        view.getLocationOnScreen(gui_location);
+        int xpos = gui_location[0];
+        int rotation = Math.round(view.getRotation());
+        // rotation can be outside [0, 359] if the user repeatedly rotates in same direction!
+        rotation = (rotation % 360 + 360) % 360; // version of (rotation % 360) that work if rotation is -ve
+        /*if( MyDebug.LOG )
+            Log.d(TAG, "    mod rotation: " + rotation);*/
+        if( rotation == 180 || rotation == 90 ) {
+            // annoying behaviour that getLocationOnScreen takes the rotation into account
+            xpos -= view.getWidth();
+        }
+        return xpos;
+    }
+
     /** Sets a current thumbnail for a photo or video just taken. Used for thumbnail animation,
      *  and when ghosting the last image.
      */
@@ -359,6 +406,9 @@ public class DrawPreview {
                 Log.d(TAG, "thumbnail_anim started");
             thumbnail_anim = true;
             thumbnail_anim_start_ms = System.currentTimeMillis();
+            test_thumbnail_anim_count++;
+            if( MyDebug.LOG )
+                Log.d(TAG, "test_thumbnail_anim_count is now: " + test_thumbnail_anim_count);
         }
         Bitmap old_thumbnail = this.last_thumbnail;
         this.last_thumbnail = thumbnail;
@@ -472,6 +522,14 @@ public class DrawPreview {
             Log.d(TAG, "photoMode: " + photoMode);
 
         show_time_pref = sharedPreferences.getBoolean(PreferenceKeys.ShowTimePreferenceKey, true);
+        // reset in case user changes the preference:
+        dateFormatTimeInstance = DateFormat.getTimeInstance();
+        current_time_string = null;
+        last_current_time_time = 0;
+        text_bounds_time = null;
+
+        show_camera_id_pref = main_activity.isMultiCam() && sharedPreferences.getBoolean(PreferenceKeys.ShowCameraIDPreferenceKey, true);
+        //show_camera_id_pref = true; // test
         show_free_memory_pref = sharedPreferences.getBoolean(PreferenceKeys.ShowFreeMemoryPreferenceKey, true);
         show_iso_pref = sharedPreferences.getBoolean(PreferenceKeys.ShowISOPreferenceKey, true);
         show_video_max_amp_pref = sharedPreferences.getBoolean(PreferenceKeys.ShowVideoMaxAmpPreferenceKey, false);
@@ -536,8 +594,7 @@ public class DrawPreview {
                 }
                 Uri uri = Uri.parse(ghost_selected_image_pref);
                 try {
-                    File file = main_activity.getStorageUtils().getFileFromDocumentUriSAF(uri, false);
-                    ghost_selected_image_bitmap = loadBitmap(uri, file);
+                    ghost_selected_image_bitmap = loadBitmap(uri);
                 }
                 catch(IOException e) {
                     Log.e(TAG, "failed to load ghost_selected_image uri: " + uri);
@@ -554,6 +611,7 @@ public class DrawPreview {
             }
             ghost_selected_image_pref = "";
         }
+        ghost_image_alpha = applicationInterface.getGhostImageAlpha();
 
         String histogram_pref = sharedPreferences.getString(PreferenceKeys.HistogramPreferenceKey, "preference_histogram_off");
         want_histogram = !histogram_pref.equals("preference_histogram_off") && main_activity.supportsPreviewBitmaps();
@@ -590,12 +648,22 @@ public class DrawPreview {
         }
         want_zebra_stripes = zebra_stripes_threshold != 0 & main_activity.supportsPreviewBitmaps();
 
+        String zebra_stripes_color_foreground_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesForegroundColorPreferenceKey, "#ff000000");
+        zebra_stripes_color_foreground = Color.parseColor(zebra_stripes_color_foreground_value);
+        String zebra_stripes_color_background_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesBackgroundColorPreferenceKey, "#ffffffff");
+        zebra_stripes_color_background = Color.parseColor(zebra_stripes_color_background_value);
+
         String focus_peaking_pref = sharedPreferences.getString(PreferenceKeys.FocusPeakingPreferenceKey, "preference_focus_peaking_off");
         want_focus_peaking = !focus_peaking_pref.equals("preference_focus_peaking_off") && main_activity.supportsPreviewBitmaps();
         String focus_peaking_color = sharedPreferences.getString(PreferenceKeys.FocusPeakingColorPreferenceKey, "#ffffff");
         focus_peaking_color_pref = Color.parseColor(focus_peaking_color);
 
+        last_camera_id_time = 0; // in case camera id changed
         last_view_angles_time = 0; // force view angles to be recomputed
+        last_take_photo_top_time = 0;  // force take_photo_top to be recomputed
+        last_top_icon_shift_time = 0; // for top_icon_shift to be recomputed
+
+        focus_seekbars_margin_left = -1; // just in case??
 
         has_settings = true;
     }
@@ -614,15 +682,61 @@ public class DrawPreview {
         }
     }
 
-    /** Loads the bitmap from the uri. File is optional, and is used on pre-Android 7 devices to
-     *  read the exif orientation.
+    /** Loads the bitmap from the uri.
+     *  The image will be downscaled if required to be comparable to the preview width.
      */
-    private Bitmap loadBitmap(Uri uri, File file) throws IOException {
+    private Bitmap loadBitmap(Uri uri) throws IOException {
         if( MyDebug.LOG )
             Log.d(TAG, "loadBitmap: " + uri);
         Bitmap bitmap;
         try {
-            bitmap = MediaStore.Images.Media.getBitmap(main_activity.getContentResolver(), uri);
+            //bitmap = MediaStore.Images.Media.getBitmap(main_activity.getContentResolver(), uri);
+
+            int sample_size = 1;
+            {
+                // attempt to compute appropriate scaling
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                InputStream input = main_activity.getContentResolver().openInputStream(uri);
+                BitmapFactory.decodeStream(input, null, bounds);
+                if( input != null )
+                    input.close();
+
+                if( bounds.outWidth != -1 && bounds.outHeight != -1 ) {
+                    // compute appropriate scaling
+                    int image_size = Math.max(bounds.outWidth, bounds.outHeight);
+
+                    Point point = new Point();
+                    Display display = main_activity.getWindowManager().getDefaultDisplay();
+                    display.getSize(point);
+                    int display_size = Math.max(point.x, point.y);
+
+                    int ratio = (int) Math.ceil((double) image_size / display_size);
+                    sample_size = Integer.highestOneBit(ratio);
+                    if( MyDebug.LOG ) {
+                        Log.d(TAG, "display_size: " + display_size);
+                        Log.d(TAG, "image_size: " + image_size);
+                        Log.d(TAG, "ratio: " + ratio);
+                        Log.d(TAG, "sample_size: " + sample_size);
+                    }
+                }
+                else {
+                    if( MyDebug.LOG )
+                        Log.e(TAG, "failed to obtain width/height of bitmap");
+                }
+            }
+
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inMutable = false;
+            options.inSampleSize = sample_size;
+            InputStream input = main_activity.getContentResolver().openInputStream(uri);
+            bitmap = BitmapFactory.decodeStream(input, null, options);
+            if( input != null )
+                input.close();
+            if( MyDebug.LOG && bitmap != null ) {
+                Log.d(TAG, "bitmap width: " + bitmap.getWidth());
+                Log.d(TAG, "bitmap height: " + bitmap.getHeight());
+            }
         }
         catch(Exception e) {
             // Although Media.getBitmap() is documented as only throwing FileNotFoundException, IOException
@@ -640,59 +754,7 @@ public class DrawPreview {
 
         // now need to take exif orientation into account, as some devices or camera apps store the orientation in the exif tag,
         // which getBitmap() doesn't account for
-        ExifInterface exif = null;
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
-            // better to use the Uri from Android 7, so this works when images are shared to Vibrance
-            try( InputStream inputStream = main_activity.getContentResolver().openInputStream(uri) ) {
-                exif = new ExifInterface(inputStream);
-            }
-        }
-        else {
-            if( file != null ) {
-                exif = new ExifInterface(file.getAbsolutePath());
-            }
-        }
-        if( exif != null ) {
-            int exif_orientation_s = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
-            boolean needs_tf = false;
-            int exif_orientation = 0;
-            // see http://jpegclub.org/exif_orientation.html
-            // and http://stackoverflow.com/questions/20478765/how-to-get-the-correct-orientation-of-the-image-selected-from-the-default-image
-            if( exif_orientation_s == ExifInterface.ORIENTATION_UNDEFINED || exif_orientation_s == ExifInterface.ORIENTATION_NORMAL ) {
-                // leave unchanged
-            }
-            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_180 ) {
-                needs_tf = true;
-                exif_orientation = 180;
-            }
-            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_90 ) {
-                needs_tf = true;
-                exif_orientation = 90;
-            }
-            else if( exif_orientation_s == ExifInterface.ORIENTATION_ROTATE_270 ) {
-                needs_tf = true;
-                exif_orientation = 270;
-            }
-            else {
-                // just leave unchanged for now
-                if( MyDebug.LOG )
-                    Log.e(TAG, "    unsupported exif orientation: " + exif_orientation_s);
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "    exif orientation: " + exif_orientation);
-
-            if( needs_tf ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "    need to rotate bitmap due to exif orientation tag");
-                Matrix m = new Matrix();
-                m.setRotate(exif_orientation, bitmap.getWidth() * 0.5f, bitmap.getHeight() * 0.5f);
-                Bitmap rotated_bitmap = Bitmap.createBitmap(bitmap, 0, 0,bitmap.getWidth(), bitmap.getHeight(), m, true);
-                if( rotated_bitmap != bitmap ) {
-                    bitmap.recycle();
-                    bitmap = rotated_bitmap;
-                }
-            }
-        }
+        bitmap = main_activity.rotateForExif(bitmap, uri);
 
         return bitmap;
     }
@@ -969,6 +1031,7 @@ public class DrawPreview {
         p.setTextAlign(Paint.Align.LEFT);
         int location_x = top_x;
         int location_y = top_y;
+        final int gap_x = (int) (8 * scale + 0.5f); // convert dps to pixels
         final int gap_y = (int) (0 * scale + 0.5f); // convert dps to pixels
         final int icon_gap_y = (int) (2 * scale + 0.5f); // convert dps to pixels
         if( ui_rotation == 90 || ui_rotation == 270 ) {
@@ -979,11 +1042,15 @@ public class DrawPreview {
         if( ui_rotation == 90 ) {
             location_y = canvas.getHeight() - location_y - (int) (20 * scale + 0.5f);
         }
+        boolean align_right = false;
         if( ui_rotation == 180 ) {
             location_x = canvas.getWidth() - location_x;
             p.setTextAlign(Paint.Align.RIGHT);
+            align_right = true;
         }
 
+        int first_line_height = 0;
+        int first_line_xshift = 0;
         if( show_time_pref ) {
             if( current_time_string == null || time_ms/1000 > last_current_time_time/1000 ) {
                 // avoid creating a new calendar object every time
@@ -1001,23 +1068,53 @@ public class DrawPreview {
             // http://stackoverflow.com/questions/15981516/simpledateformat-gettimeinstance-ignores-24-hour-format
             // http://daniel-codes.blogspot.co.uk/2013/06/how-to-correctly-format-datetime.html
             // http://code.google.com/p/android/issues/detail?id=42104
+            // update: now seems to be fixed
             // also possibly related https://code.google.com/p/android/issues/detail?id=181201
             //int height = applicationInterface.drawTextWithBackground(canvas, p, current_time_string, Color.WHITE, Color.BLACK, location_x, location_y, MyApplicationInterface.Alignment.ALIGNMENT_TOP);
             if( text_bounds_time == null ) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "compute text_bounds_time");
                 text_bounds_time = new Rect();
-                String bounds_time_string = "00:00:00";
+                // better to not use a fixed string like "00:00:00" as don't want to make assumptions - e.g., in 12 hour format we'll have the appended am/pm to account for!
+                Calendar calendar = Calendar.getInstance();
+                calendar.set(100, 0, 1, 10, 59, 59);
+                String bounds_time_string = dateFormatTimeInstance.format(calendar.getTime());
+                if( MyDebug.LOG )
+                    Log.d(TAG, "bounds_time_string:" + bounds_time_string);
                 p.getTextBounds(bounds_time_string, 0, bounds_time_string.length(), text_bounds_time);
             }
+            first_line_xshift += text_bounds_time.width() + gap_x;
             int height = applicationInterface.drawTextWithBackground(canvas, p, current_time_string, Color.WHITE, Color.BLACK, location_x, location_y, MyApplicationInterface.Alignment.ALIGNMENT_TOP, null, MyApplicationInterface.Shadow.SHADOW_OUTLINE, text_bounds_time);
             height += gap_y;
-            if( ui_rotation == 90 ) {
-                location_y -= height;
+            // don't update location_y yet, as we have time and cameraid shown on the same line
+            first_line_height = Math.max(first_line_height, height);
+        }
+        if( show_camera_id_pref && camera_controller != null ) {
+            if( camera_id_string == null || time_ms > last_camera_id_time + 10000 ) {
+                // cache string for performance
+
+                camera_id_string = getContext().getResources().getString(R.string.camera_id) + ":" + preview.getCameraId(); // intentionally don't put a space
+                last_camera_id_time = time_ms;
             }
-            else {
-                location_y += height;
+            if( text_bounds_camera_id == null ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "compute text_bounds_camera_id");
+                text_bounds_camera_id = new Rect();
+                p.getTextBounds(camera_id_string, 0, camera_id_string.length(), text_bounds_camera_id);
             }
+            int xpos = align_right ? location_x - first_line_xshift : location_x + first_line_xshift;
+            int height = applicationInterface.drawTextWithBackground(canvas, p, camera_id_string, Color.WHITE, Color.BLACK, xpos, location_y, MyApplicationInterface.Alignment.ALIGNMENT_TOP, null, MyApplicationInterface.Shadow.SHADOW_OUTLINE, text_bounds_camera_id);
+            height += gap_y;
+            // don't update location_y yet, as we have time and cameraid shown on the same line
+            first_line_height = Math.max(first_line_height, height);
+        }
+        // update location_y for first line (time and camera id)
+        if( ui_rotation == 90 ) {
+            // upside-down portrait
+            location_y -= first_line_height;
+        }
+        else {
+            location_y += first_line_height;
         }
 
         if( camera_controller != null && show_free_memory_pref ) {
@@ -1092,6 +1189,12 @@ public class DrawPreview {
                         iso_exposure_string += " ";
                     iso_exposure_string += preview.getFrameDurationString(frame_duration);
                 }
+                /*if( camera_controller.captureResultHasAperture() ) {
+                    float aperture = camera_controller.captureResultAperture();
+                    if( iso_exposure_string.length() > 0 )
+                        iso_exposure_string += " F";
+                    iso_exposure_string += decimal_format_1dp_force0.format(aperture);
+                }*/
 
                 is_scanning = false;
                 if( camera_controller.captureResultIsAEScanning() ) {
@@ -1154,12 +1257,15 @@ public class DrawPreview {
                 canvas.drawRect(icon_dest, p);
                 p.setAlpha(255);
 
-                if( applicationInterface.getLocation() != null ) {
+                Location location = applicationInterface.getLocation(locationInfo);
+                if( location != null ) {
                     canvas.drawBitmap(location_bitmap, null, icon_dest, p);
                     int location_radius = icon_size / 10;
                     int indicator_x = location_x2 + icon_size - (int)(location_radius*1.5);
                     int indicator_y = location_y + (int)(location_radius*1.5);
-                    p.setColor(applicationInterface.getLocation().getAccuracy() < 25.01f ? Color.rgb(37, 155, 36) : Color.rgb(255, 235, 59)); // Green 500 or Yellow 500
+                    p.setColor(locationInfo.LocationWasCached() ? Color.rgb(127, 127, 127) :
+                            location.getAccuracy() < 25.01f ? Color.rgb(37, 155, 36) :
+                                    Color.rgb(255, 235, 59)); // Green 500 or Yellow 500
                     canvas.drawCircle(indicator_x, indicator_y, location_radius, p);
                 }
                 else {
@@ -1395,8 +1501,8 @@ public class DrawPreview {
                 if( histogram != null ) {
 					/*if( MyDebug.LOG )
 						Log.d(TAG, "histogram length: " + histogram.length);*/
-                    final int histogram_width = (int) (100 * scale + 0.5f); // convert dps to pixels
-                    final int histogram_height = (int) (60 * scale + 0.5f); // convert dps to pixels
+                    final int histogram_width = (int) (histogram_width_dp * scale + 0.5f); // convert dps to pixels
+                    final int histogram_height = (int) (histogram_height_dp * scale + 0.5f); // convert dps to pixels
                     // n.b., if changing the histogram_height, remember to update focus_seekbar and
                     // focus_bracketing_target_seekbar margins in activity_main.xml
                     int location_x2 = location_x - flash_padding;
@@ -1479,10 +1585,10 @@ public class DrawPreview {
      *            should be the maximum value of all histogram channels.
      */
     private void drawHistogramChannel(Canvas canvas, int [] histogram_channel, int max) {
-        long debug_time = 0;
+        /*long debug_time = 0;
         if( MyDebug.LOG ) {
             debug_time = System.currentTimeMillis();
-        }
+        }*/
 
 		/*if( MyDebug.LOG )
 			Log.d(TAG, "drawHistogramChannel, time before creating path: " + (System.currentTimeMillis() - debug_time));*/
@@ -1539,39 +1645,65 @@ public class DrawPreview {
 					canvas.getHeight() / 2, p);*/
             int gap_y = (int) (20 * scale + 0.5f); // convert dps to pixels
             int text_y = (int) (16 * scale + 0.5f); // convert dps to pixels
+            boolean avoid_ui = false;
             // fine tuning to adjust placement of text with respect to the GUI, depending on orientation
             if( ui_placement == MainUI.UIPlacement.UIPLACEMENT_TOP && ( ui_rotation == 0 || ui_rotation == 180 ) ) {
-                text_base_y = canvas.getHeight() - (int)(0.5*gap_y);
+                text_base_y = canvas.getHeight() - (int)(0.1*gap_y);
+                avoid_ui = true;
             }
             else if( ui_rotation == ( ui_placement == MainUI.UIPlacement.UIPLACEMENT_RIGHT ? 0 : 180 ) ) {
-                text_base_y = canvas.getHeight() - (int)(0.5*gap_y);
+                text_base_y = canvas.getHeight() - (int)(0.1*gap_y);
+                avoid_ui = true;
             }
             else if( ui_rotation == ( ui_placement == MainUI.UIPlacement.UIPLACEMENT_RIGHT ? 180 : 0 ) ) {
                 text_base_y = canvas.getHeight() - (int)(2.5*gap_y); // leave room for GUI icons
             }
             else if( ui_rotation == 90 || ui_rotation == 270 ) {
-                //text_base_y = canvas.getHeight() + (int)(0.5*gap_y);
-				/*ImageButton view = (ImageButton)main_activity.findViewById(R.id.take_photo);
-				// align with "top" of the take_photo button, but remember to take the rotation into account!
-				view.getLocationOnScreen(gui_location);
-				int view_left = gui_location[0];
-				preview.getView().getLocationOnScreen(gui_location);
-				int this_left = gui_location[0];
+                // ui_rotation 90 is upside down portrait
+                // 270 is portrait
+
+                if( last_take_photo_top_time == 0 || time_ms > last_take_photo_top_time + 1000 ) {
+                    /*if( MyDebug.LOG )
+                        Log.d(TAG, "update cached take_photo_top");*/
+                    // don't call this too often, for UI performance (due to calling View.getLocationOnScreen())
+                    View view = main_activity.findViewById(R.id.take_photo);
+                    // align with "top" of the take_photo button, but remember to take the rotation into account!
+                    int view_left = getViewOnScreenX(view);
+                    preview.getView().getLocationOnScreen(gui_location);
+                    int this_left = gui_location[0];
+                    take_photo_top = view_left - this_left;
+
+                    last_take_photo_top_time = time_ms;
+                    /*if( MyDebug.LOG ) {
+                        Log.d(TAG, "view_left: " + view_left);
+                        Log.d(TAG, "this_left: " + this_left);
+                        Log.d(TAG, "take_photo_top: " + take_photo_top);
+                    }*/
+                }
+
 				// diff_x is the difference from the centre of the canvas to the position we want
-				int diff_x = view_left - ( this_left + canvas.getWidth()/2 );
-				*/
+                int diff_x = take_photo_top - canvas.getWidth()/2;
+
 				/*if( MyDebug.LOG ) {
 					Log.d(TAG, "view left: " + view_left);
 					Log.d(TAG, "this left: " + this_left);
 					Log.d(TAG, "canvas is " + canvas.getWidth() + " x " + canvas.getHeight());
+                    Log.d(TAG, "compare offset_x: " + (preview.getView().getRootView().getRight()/2 - diff_x)/scale);
 				}*/
+
                 // diff_x is the difference from the centre of the canvas to the position we want
                 // assumes canvas is centered
                 // avoids calling getLocationOnScreen for performance
-                int diff_x = preview.getView().getRootView().getRight()/2 - (int) (100 * scale + 0.5f); // convert dps to pixels
+                /*int offset_x = (int) (124 * scale + 0.5f); // convert dps to pixels
+                // offset_x should be enough such that on-screen level angle (this is the lowest display on-screen text) does not
+                // interfere with take photo icon when using at least a 16:9 preview aspect ratio
+                // should correspond to the logged "compare offset_x" above
+                int diff_x = preview.getView().getRootView().getRight()/2 - offset_x;
+                */
+
                 int max_x = canvas.getWidth();
                 if( ui_rotation == 90 ) {
-                    // so we don't interfere with the top bar info (datetime, free memory, ISO)
+                    // so we don't interfere with the top bar info (datetime, free memory, ISO) when upside down
                     max_x -= (int)(2.5*gap_y);
                 }
 				/*if( MyDebug.LOG ) {
@@ -1581,10 +1713,26 @@ public class DrawPreview {
 					Log.d(TAG, "max_x: " + max_x);
 				}*/
                 if( canvas.getWidth()/2 + diff_x > max_x ) {
-                    // in case goes off the size of the canvas, for "black bar" cases (when preview aspect ratio != screen aspect ratio)
+                    // in case goes off the size of the canvas, for "black bar" cases (when preview aspect ratio < screen aspect ratio)
                     diff_x = max_x - canvas.getWidth()/2;
                 }
                 text_base_y = canvas.getHeight()/2 + diff_x - (int)(0.5*gap_y);
+            }
+
+            if( avoid_ui ) {
+                // avoid parts of the UI
+                View view = main_activity.findViewById(R.id.focus_seekbar);
+                if(view.getVisibility() == View.VISIBLE ) {
+                    text_base_y -= view.getHeight();
+                }
+                view = main_activity.findViewById(R.id.focus_bracketing_target_seekbar);
+                if(view.getVisibility() == View.VISIBLE ) {
+                    text_base_y -= view.getHeight();
+                }
+                /*view = main_activity.findViewById(R.id.sliders_container);
+                if(view.getVisibility() == View.VISIBLE ) {
+                    text_base_y -= view.getHeight();
+                }*/
             }
 
             boolean draw_angle = has_level_angle && show_angle_pref;
@@ -1818,6 +1966,8 @@ public class DrawPreview {
                     canvas.drawText(getContext().getResources().getString(R.string.failed_to_open_camera_1), canvas.getWidth() / 2.0f, canvas.getHeight() / 2.0f, p);
                     canvas.drawText(getContext().getResources().getString(R.string.failed_to_open_camera_2), canvas.getWidth() / 2.0f, canvas.getHeight() / 2.0f + pixels_offset, p);
                     canvas.drawText(getContext().getResources().getString(R.string.failed_to_open_camera_3), canvas.getWidth() / 2.0f, canvas.getHeight() / 2.0f + 2 * pixels_offset, p);
+                    // n.b., use applicationInterface.getCameraIdPref(), as preview.getCameraId() returns 0 if camera_controller==null
+                    canvas.drawText(getContext().getResources().getString(R.string.camera_id) + ":" + applicationInterface.getCameraIdPref(), canvas.getWidth() / 2.0f, canvas.getHeight() / 2.0f + 3 * pixels_offset, p);
                 }
             }
             else {
@@ -1832,20 +1982,64 @@ public class DrawPreview {
         int top_y = (int) (5 * scale + 0.5f); // convert dps to pixels
         View top_icon = main_activity.getMainUI().getTopIcon();
         if( top_icon != null ) {
-            top_icon.getLocationOnScreen(gui_location);
-            int top_margin = gui_location[0] + top_icon.getWidth();
-            preview.getView().getLocationOnScreen(gui_location);
-            int preview_left = gui_location[0];
-            /*if( MyDebug.LOG )
-            	Log.d(TAG, "preview_left: " + preview_left);*/
-            int shift = top_margin - preview_left;
-            if( shift > 0 ) {
+            if( last_top_icon_shift_time == 0 || time_ms > last_top_icon_shift_time + 1000 ) {
+                // avoid computing every time, due to cost of calling View.getLocationOnScreen()
+                /*if( MyDebug.LOG )
+                    Log.d(TAG, "update cached top_icon_shift");*/
+                int top_margin = getViewOnScreenX(top_icon) + top_icon.getWidth();
+                preview.getView().getLocationOnScreen(gui_location);
+                int preview_left = gui_location[0];
+                this.top_icon_shift = top_margin - preview_left;
+                /*if( MyDebug.LOG ) {
+                    Log.d(TAG, "top_icon.getRotation(): " + top_icon.getRotation());
+                    Log.d(TAG, "preview_left: " + preview_left);
+                    Log.d(TAG, "top_margin: " + top_margin);
+                    Log.d(TAG, "top_icon_shift: " + top_icon_shift);
+                }*/
+
+                last_top_icon_shift_time = time_ms;
+            }
+
+            if( this.top_icon_shift > 0 ) {
                 if( ui_rotation == 90 || ui_rotation == 270 ) {
-                    top_y += shift;
+                    // portrait
+                    top_y += top_icon_shift;
                 }
                 else {
-                    top_x += shift;
+                    // landscape
+                    top_x += top_icon_shift;
                 }
+            }
+        }
+
+        {
+            /*int focus_seekbars_margin_left_dp = 85;
+            if( want_histogram )
+                focus_seekbars_margin_left_dp += DrawPreview.histogram_height_dp;*/
+            // 135 needed to make room for on-screen info lines in DrawPreview.onDrawInfoLines(), including the histogram
+            // but we also need to take the top_icon_shift into account, for widescreen aspect ratios and "icons along top" UI placement
+            int focus_seekbars_margin_left_dp = 135;
+            int new_focus_seekbars_margin_left = (int) (focus_seekbars_margin_left_dp * scale + 0.5f); // convert dps to pixels
+            if( top_icon_shift > 0 ) {
+                //noinspection SuspiciousNameCombination
+                new_focus_seekbars_margin_left += top_icon_shift;
+            }
+
+            if( focus_seekbars_margin_left == -1 || new_focus_seekbars_margin_left != focus_seekbars_margin_left ) {
+                // we check whether focus_seekbars_margin_left has changed, in case there is a performance cost for setting layoutparams
+                this.focus_seekbars_margin_left = new_focus_seekbars_margin_left;
+                if( MyDebug.LOG )
+                    Log.d(TAG, "set focus_seekbars_margin_left to " + focus_seekbars_margin_left);
+
+                View view = main_activity.findViewById(R.id.focus_seekbar);
+                RelativeLayout.LayoutParams layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
+                layoutParams.setMargins(focus_seekbars_margin_left, 0, 0, 0);
+                view.setLayoutParams(layoutParams);
+
+                view = main_activity.findViewById(R.id.focus_bracketing_target_seekbar);
+                layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
+                layoutParams.setMargins(focus_seekbars_margin_left, 0, 0, 0);
+                view.setLayoutParams(layoutParams);
             }
         }
 
@@ -1913,7 +2107,10 @@ public class DrawPreview {
         }
         else
             actual_show_angle_line_pref = show_angle_line_pref;
-        if( camera_controller != null && !preview.isPreviewPaused() && has_level_angle && ( actual_show_angle_line_pref || show_pitch_lines_pref || show_geo_direction_lines_pref ) ) {
+
+        boolean allow_angle_lines = camera_controller != null && !preview.isPreviewPaused();
+
+        if( allow_angle_lines && has_level_angle && ( actual_show_angle_line_pref || show_pitch_lines_pref || show_geo_direction_lines_pref ) ) {
             int ui_rotation = preview.getUIRotation();
             double level_angle = preview.getLevelAngle();
             boolean has_pitch_angle = preview.hasPitchAngle();
@@ -2109,6 +2306,49 @@ public class DrawPreview {
 
             canvas.restore();
         }
+
+        if( allow_angle_lines && auto_stabilise_pref && preview.hasLevelAngleStable() && !preview.isVideo() ) {
+            // although auto-level is supported for photos taken in video mode, there's the risk that it's misleading to display
+            // the guide when in video mode!
+            double level_angle = preview.getLevelAngle();
+            double auto_stabilise_level_angle = level_angle;
+            //double auto_stabilise_level_angle = angle;
+            while( auto_stabilise_level_angle < -90 )
+                auto_stabilise_level_angle += 180;
+            while( auto_stabilise_level_angle > 90 )
+                auto_stabilise_level_angle -= 180;
+            double level_angle_rad_abs = Math.abs( Math.toRadians(auto_stabilise_level_angle) );
+
+            int w1 = canvas.getWidth();
+            int h1 = canvas.getHeight();
+            double w0 = (w1 * Math.cos(level_angle_rad_abs) + h1 * Math.sin(level_angle_rad_abs));
+            double h0 = (w1 * Math.sin(level_angle_rad_abs) + h1 * Math.cos(level_angle_rad_abs));
+
+            if( ImageSaver.autoStabiliseCrop(auto_stabilise_crop, level_angle_rad_abs, w0, h0, w1, h1, canvas.getWidth(), canvas.getHeight()) ) {
+                int w2 = auto_stabilise_crop[0];
+                int h2 = auto_stabilise_crop[1];
+                int cx = canvas.getWidth()/2;
+                int cy = canvas.getHeight()/2;
+
+                canvas.save();
+                canvas.rotate((float)-level_angle, cx, cy);
+
+                if( has_level_angle && Math.abs(level_angle) <= close_level_angle ) { // n.b., use level_angle, not angle or orig_level_angle
+                    p.setColor(angle_highlight_color_pref);
+                }
+                else {
+                    p.setColor(Color.WHITE);
+                }
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(stroke_width);
+
+                canvas.drawRect((canvas.getWidth() - w2)/2.0f, (canvas.getHeight() - h2)/2.0f, (canvas.getWidth() + w2)/2.0f, (canvas.getHeight() + h2)/2.0f, p);
+
+                canvas.restore();
+
+                p.setStyle(Paint.Style.FILL); // reset
+            }
+        }
     }
 
     private void doThumbnailAnimation(Canvas canvas, long time_ms) {
@@ -2291,7 +2531,7 @@ public class DrawPreview {
                 preview.disableHistogram();
 
             if( want_zebra_stripes )
-                preview.enableZebraStripes(zebra_stripes_threshold);
+                preview.enableZebraStripes(zebra_stripes_threshold, zebra_stripes_color_foreground, zebra_stripes_color_background);
             else
                 preview.disableZebraStripes();
 
@@ -2354,14 +2594,14 @@ public class DrawPreview {
             }
             setLastImageMatrix(canvas, last_thumbnail, ui_rotation, !show_last_image);
             if( !show_last_image )
-                p.setAlpha(127);
+                p.setAlpha(ghost_image_alpha);
             canvas.drawBitmap(last_thumbnail, last_image_matrix, p);
             if( !show_last_image )
                 p.setAlpha(255);
         }
         else if( camera_controller != null && !front_screen_flash && ghost_selected_image_bitmap != null ) {
             setLastImageMatrix(canvas, ghost_selected_image_bitmap, ui_rotation, true);
-            p.setAlpha(127);
+            p.setAlpha(ghost_image_alpha);
             canvas.drawBitmap(ghost_selected_image_bitmap, last_image_matrix, p);
             p.setAlpha(255);
         }
@@ -2505,7 +2745,7 @@ public class DrawPreview {
         }
         last_image_matrix.preRotate(this_ui_rotation, bitmap.getWidth()/2.0f, bitmap.getHeight()/2.0f);
         if( flip_front ) {
-            boolean is_front_facing = camera_controller != null && camera_controller.isFrontFacing();
+            boolean is_front_facing = camera_controller != null && (camera_controller.getFacing() == CameraController.Facing.FACING_FRONT);
             if( is_front_facing && !sharedPreferences.getString(PreferenceKeys.FrontCameraMirrorKey, "preference_front_camera_mirror_no").equals("preference_front_camera_mirror_photo") ) {
                 last_image_matrix.preScale(-1.0f, 1.0f, bitmap.getWidth()/2.0f, 0.0f);
             }
