@@ -2212,7 +2212,9 @@ public class DrawPreview {
 				Log.d(TAG, "has_pitch_angle?: " + has_pitch_angle);
 				Log.d(TAG, "show_pitch_lines?: " + show_pitch_lines);
 			}*/
-            float angle_scale = (float)Math.sqrt( angle_scale_x*angle_scale_x + angle_scale_y*angle_scale_y );
+            final float angleScaleCompX = angle_scale_x * (float)Math.cos(Math.toRadians(angle));
+            final float angleScaleCompY = angle_scale_y * (float)Math.sin(Math.toRadians(angle));
+            float angle_scale =  (float)Math.hypot(angleScaleCompX, angleScaleCompY);
             angle_scale *= preview.getZoomRatio();
             if( has_pitch_angle && show_pitch_lines_pref ) {
                 int pitch_radius_dps = (ui_rotation == 90 || ui_rotation == 270) ? 100 : 80;
