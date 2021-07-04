@@ -2215,6 +2215,11 @@ public class DrawPreview {
             final float angleScaleCompX = angle_scale_x * (float)Math.cos(Math.toRadians(angle));
             final float angleScaleCompY = angle_scale_y * (float)Math.sin(Math.toRadians(angle));
             float angle_scale =  (float)Math.hypot(angleScaleCompX, angleScaleCompY);
+            final boolean isA320F = android.os.Build.MODEL.equals("SM-A320F");
+            final boolean isUp = ui_rotation==270;
+            final boolean isDown = ui_rotation==90;
+            final boolean isPortrait = isUp || isDown;
+            final double angleShift = isA320F && isPortrait ? (isUp?-1.8:+1.2) : 0;
             angle_scale *= preview.getZoomRatio();
             if( has_pitch_angle && show_pitch_lines_pref ) {
                 int pitch_radius_dps = (ui_rotation == 90 || ui_rotation == 270) ? 100 : 80;
@@ -2223,7 +2228,7 @@ public class DrawPreview {
                 if( preview.getZoomRatio() >= 2.0f )
                     angle_step = 5;
                 for(int latitude_angle=-90;latitude_angle<=90;latitude_angle+=angle_step) {
-                    double this_angle = pitch_angle - latitude_angle;
+                    double this_angle = pitch_angle+angleShift - latitude_angle;
                     if( Math.abs(this_angle) < 90.0 ) {
                         float pitch_distance = angle_scale * (float)Math.tan( Math.toRadians(this_angle) ); // angle_scale is already in pixels rather than dps
 						/*if( MyDebug.LOG ) {
